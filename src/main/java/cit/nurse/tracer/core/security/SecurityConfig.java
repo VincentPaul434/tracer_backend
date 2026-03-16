@@ -28,7 +28,7 @@ public class SecurityConfig {
                 .requestMatchers("/error").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/v1/health").permitAll()
                 // Public: alumni survey submission (single-page, one POST)
-                .requestMatchers(HttpMethod.POST, "/api/v1/submissions/**").permitAll()
+                .requestMatchers("/api/v1/submissions/**").permitAll()
                 // Public: preflight
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 // Future: admin endpoints will require JWT here
