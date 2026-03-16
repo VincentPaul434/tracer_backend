@@ -33,7 +33,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 // Future: admin endpoints will require JWT here
                 // .requestMatchers("/api/v1/admin/**").authenticated()
-                .anyRequest().denyAll()
+                .anyRequest().permitAll()
             );
 
         return http.build();
