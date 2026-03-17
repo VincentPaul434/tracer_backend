@@ -18,6 +18,7 @@ import java.security.spec.X509EncodedKeySpec;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Date;
+import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -67,6 +68,20 @@ public class JwtUtils {
             .compact();
     }
 
+    public String generateAuthToken(UUID userId, String username, String role, Duration ttl) {
+        Instant now = Instant.now();
+        Instant expiresAt = now.plus(ttl);
+
+        return Jwts.builder()
+            .setSubject(username)
+            .claim("userId", userId.toString())
+            .claim("roles", List.of(role))
+            .setIssuedAt(Date.from(now))
+            .setExpiration(Date.from(expiresAt))
+            .signWith(privateKey, SIGNATURE_ALGORITHM)
+            .compact();
+    }
+
     public boolean isTokenValid(String token) {
         try {
             parseClaims(token);
@@ -77,8 +92,24 @@ public class JwtUtils {
     }
 
     public UUID extractSubmissionId(String token) {
-        Claims claims = parseClaims(token).getBody();
+        Claims claims = extractClaims(token);
         return UUID.fromString(claims.getSubject());
+    }
+
+    public Claims extractClaims(String token) {
+        return parseClaims(token).getBody();
+    }
+
+    public List<String> extractRoles(String token) {
+        Object rolesClaim = extractClaims(token).get("roles");
+
+        if (rolesClaim instanceof List<?> roles) {
+            return roles.stream()
+                .map(String::valueOf)
+                .toList();
+        }
+
+        return List.of();
     }
 
     private Jws<Claims> parseClaims(String token) {

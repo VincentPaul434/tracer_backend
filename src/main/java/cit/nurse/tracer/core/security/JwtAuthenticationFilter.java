@@ -1,11 +1,13 @@
 package cit.nurse.tracer.core.security;
 
+import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -42,23 +44,60 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         String header = request.getHeader("Authorization");
 
-        if (StringUtils.hasText(header) && header.startsWith(BEARER_PREFIX)) {
+        if (StringUtils.hasText(header)
+            && header.startsWith(BEARER_PREFIX)
+            && SecurityContextHolder.getContext().getAuthentication() == null) {
+
             String token = header.substring(BEARER_PREFIX.length());
 
-            if (jwtUtils.isTokenValid(token)) {
-                UUID submissionId = jwtUtils.extractSubmissionId(token);
-
-                UsernamePasswordAuthenticationToken authentication =
-                        new UsernamePasswordAuthenticationToken(
-                                submissionId,
-                                null,
-                                List.of(new SimpleGrantedAuthority("ROLE_SUBMISSION"))
-                        );
-
-                SecurityContextHolder.getContext().setAuthentication(authentication);
+            try {
+                Claims claims = jwtUtils.extractClaims(token);
+                applyAuthentication(claims);
+            } catch (Exception ignored) {
+                SecurityContextHolder.clearContext();
             }
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private void applyAuthentication(Claims claims) {
+        Object submissionIdClaim = claims.get("submissionId");
+        if (submissionIdClaim != null) {
+            UUID submissionId = UUID.fromString(submissionIdClaim.toString());
+            UsernamePasswordAuthenticationToken authentication =
+                new UsernamePasswordAuthenticationToken(
+                    submissionId,
+                    null,
+                    List.of(new SimpleGrantedAuthority("ROLE_SUBMISSION"))
+                );
+            SecurityContextHolder.getContext().setAuthentication(authentication);
+            return;
+        }
+
+        Object rolesClaim = claims.get("roles");
+        if (!(rolesClaim instanceof List<?> rolesRaw)) {
+            return;
+        }
+
+        List<SimpleGrantedAuthority> authorities = rolesRaw.stream()
+            .map(String::valueOf)
+            .filter(StringUtils::hasText)
+            .map(SimpleGrantedAuthority::new)
+            .toList();
+
+        if (authorities.isEmpty()) {
+            return;
+        }
+
+        UsernamePasswordAuthenticationToken authentication =
+            new UsernamePasswordAuthenticationToken(claims.getSubject(), null, authorities);
+
+        Object userIdClaim = claims.get("userId");
+        if (userIdClaim != null) {
+            authentication.setDetails(Map.of("userId", userIdClaim.toString()));
+        }
+
+        SecurityContextHolder.getContext().setAuthentication(authentication);
     }
 }
