@@ -13,16 +13,27 @@ import cit.nurse.tracer.licensure.repository.LicensureExaminationRepository;
 import cit.nurse.tracer.personalinfo.model.PersonalInfo;
 import cit.nurse.tracer.personalinfo.repository.PersonalInfoRepository;
 import cit.nurse.tracer.submission.dto.MasterSurveyRequest;
+import cit.nurse.tracer.submission.dto.SurveyResponseDetail;
 import cit.nurse.tracer.submission.dto.SurveySubmissionResponse;
 import cit.nurse.tracer.submission.model.SurveySubmission;
 import cit.nurse.tracer.submission.repository.SurveySubmissionRepository;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class SurveyService {
+
+    private static final String SURVEY_RESPONSES_CACHE = "surveyResponsesPage";
 
     private final SurveySubmissionRepository submissionRepo;
     private final PersonalInfoRepository personalInfoRepo;
@@ -54,6 +65,7 @@ public class SurveyService {
      * Saves the entire survey in a single transaction.
      * If any part fails, the whole submission rolls back.
      */
+    @CacheEvict(value = SURVEY_RESPONSES_CACHE, allEntries = true)
     @Transactional
     public SurveySubmissionResponse submitSurvey(MasterSurveyRequest request) {
         if (!"yes".equals(request.consent())) {
@@ -74,6 +86,167 @@ public class SurveyService {
         saveCommunicationPreference(submission, request.communicationPreference());
 
         return new SurveySubmissionResponse(submission.getId(), "Survey submitted successfully.");
+    }
+
+    @Transactional(readOnly = true)
+    @Cacheable(
+        value = SURVEY_RESPONSES_CACHE,
+        key = "#pageable.pageNumber + ':' + #pageable.pageSize + ':' + #pageable.sort.toString()"
+    )
+    public Page<SurveyResponseDetail> getSurveyResponses(Pageable pageable) {
+    Page<SurveySubmission> submissionsPage = submissionRepo.findAll(pageable);
+    if (submissionsPage.isEmpty()) {
+        return Page.empty(pageable);
+    }
+
+    List<SurveySubmission> submissions = submissionsPage.getContent();
+
+    Map<UUID, PersonalInfo> personalInfoBySubmissionId = personalInfoRepo.findBySubmissionIn(submissions).stream()
+        .collect(Collectors.toMap(item -> item.getSubmission().getId(), Function.identity(), (left, right) -> left));
+
+    Map<UUID, EducationalBackground> educationBySubmissionId = educationRepo.findBySubmissionIn(submissions).stream()
+        .collect(Collectors.toMap(item -> item.getSubmission().getId(), Function.identity(), (left, right) -> left));
+
+    Map<UUID, LicensureExamination> licensureBySubmissionId = licensureRepo.findBySubmissionIn(submissions).stream()
+        .collect(Collectors.toMap(item -> item.getSubmission().getId(), Function.identity(), (left, right) -> left));
+
+    Map<UUID, EmploymentData> employmentBySubmissionId = employmentRepo.findBySubmissionIn(submissions).stream()
+        .collect(Collectors.toMap(item -> item.getSubmission().getId(), Function.identity(), (left, right) -> left));
+
+    Map<UUID, ProgramEvaluation> evaluationBySubmissionId = evaluationRepo.findBySubmissionIn(submissions).stream()
+        .collect(Collectors.toMap(item -> item.getSubmission().getId(), Function.identity(), (left, right) -> left));
+
+    Map<UUID, CommunicationPreference> communicationBySubmissionId = communicationRepo.findBySubmissionIn(submissions).stream()
+        .collect(Collectors.toMap(item -> item.getSubmission().getId(), Function.identity(), (left, right) -> left));
+
+    List<SurveyResponseDetail> responses = submissions.stream()
+        .map(submission -> toSurveyResponseDetail(
+            submission,
+            personalInfoBySubmissionId.get(submission.getId()),
+            educationBySubmissionId.get(submission.getId()),
+            licensureBySubmissionId.get(submission.getId()),
+            employmentBySubmissionId.get(submission.getId()),
+            evaluationBySubmissionId.get(submission.getId()),
+            communicationBySubmissionId.get(submission.getId())
+        ))
+        .toList();
+
+    return new PageImpl<>(responses, pageable, submissionsPage.getTotalElements());
+    }
+
+    private SurveyResponseDetail toSurveyResponseDetail(
+        SurveySubmission submission,
+        PersonalInfo personalInfo,
+        EducationalBackground educationalBackground,
+        LicensureExamination licensureExamination,
+        EmploymentData employmentData,
+        ProgramEvaluation programEvaluation,
+        CommunicationPreference communicationPreference
+    ) {
+    return new SurveyResponseDetail(
+        submission.getId(),
+        submission.getEmail(),
+        submission.isHasAcceptedPrivacy(),
+        submission.getStatus() == null ? null : submission.getStatus().name(),
+        submission.getSubmittedAt(),
+        submission.getCreatedAt(),
+        submission.getUpdatedAt(),
+        toPersonalInfoSection(personalInfo),
+        toEducationalBackgroundSection(educationalBackground),
+        toLicensureExaminationSection(licensureExamination),
+        toEmploymentSection(employmentData),
+        toProgramEvaluationSection(programEvaluation),
+        toCommunicationPreferenceSection(communicationPreference)
+    );
+    }
+
+    private SurveyResponseDetail.PersonalInfoSection toPersonalInfoSection(PersonalInfo personalInfo) {
+    if (personalInfo == null) {
+        return null;
+    }
+    return new SurveyResponseDetail.PersonalInfoSection(
+        personalInfo.getFullName(),
+        personalInfo.getGender(),
+        personalInfo.getGenderOther(),
+        personalInfo.getCivilStatus(),
+        personalInfo.getCivilStatusOther(),
+        personalInfo.getBirthday(),
+        personalInfo.getResidence(),
+        personalInfo.getContactInformation()
+    );
+    }
+
+    private SurveyResponseDetail.EducationalBackgroundSection toEducationalBackgroundSection(EducationalBackground educationalBackground) {
+    if (educationalBackground == null) {
+        return null;
+    }
+    return new SurveyResponseDetail.EducationalBackgroundSection(
+        educationalBackground.getDegreeProgramCompleted(),
+        educationalBackground.getYearGraduated(),
+        educationalBackground.getYearGraduatedOther(),
+        educationalBackground.getAcademicHonors(),
+        educationalBackground.getAcademicHonorsOtherText(),
+        educationalBackground.getPursuedFurtherStudies(),
+        educationalBackground.getFurtherDegreeProgram()
+    );
+    }
+
+    private SurveyResponseDetail.LicensureExaminationSection toLicensureExaminationSection(LicensureExamination licensureExamination) {
+    if (licensureExamination == null) {
+        return null;
+    }
+    return new SurveyResponseDetail.LicensureExaminationSection(
+        licensureExamination.getHasTakenPnle(),
+        licensureExamination.getLicensureStatus(),
+        licensureExamination.getPnleYearPassed(),
+        licensureExamination.getPnleYearPassedOther(),
+        licensureExamination.getExamTakeCount()
+    );
+    }
+
+    private SurveyResponseDetail.EmploymentSection toEmploymentSection(EmploymentData employmentData) {
+    if (employmentData == null) {
+        return null;
+    }
+    return new SurveyResponseDetail.EmploymentSection(
+        employmentData.getEmploymentStatus(),
+        employmentData.getJobRelatedToDegree(),
+        employmentData.getEmploymentSector(),
+        employmentData.getEmploymentSectorOther(),
+        employmentData.getPositionDesignation(),
+        employmentData.getPositionDesignationOther(),
+        employmentData.getFirstJobDuration(),
+        employmentData.getFirstJobSources(),
+        employmentData.getFirstJobSourceOtherText(),
+        employmentData.getEstimatedMonthlySalary(),
+        employmentData.getUnemploymentReasons(),
+        employmentData.getUnemploymentReasonOtherText()
+    );
+    }
+
+    private SurveyResponseDetail.ProgramEvaluationSection toProgramEvaluationSection(ProgramEvaluation programEvaluation) {
+    if (programEvaluation == null) {
+        return null;
+    }
+    return new SurveyResponseDetail.ProgramEvaluationSection(
+        programEvaluation.getRelevanceSkills(),
+        programEvaluation.getCareerPreparationLevel(),
+        programEvaluation.getNursingProgramAspect(),
+        programEvaluation.getNursingProgramSuggestion()
+    );
+    }
+
+    private SurveyResponseDetail.CommunicationPreferenceSection toCommunicationPreferenceSection(CommunicationPreference communicationPreference) {
+    if (communicationPreference == null) {
+        return null;
+    }
+    return new SurveyResponseDetail.CommunicationPreferenceSection(
+        communicationPreference.getInvitationChannels(),
+        communicationPreference.getInvitationChannelOtherText(),
+        communicationPreference.getUpdateFrequency(),
+        communicationPreference.getAlumniGroupWillingness(),
+        communicationPreference.getAlumniPlatform()
+    );
     }
 
     private void savePersonalInfo(SurveySubmission submission, MasterSurveyRequest.PersonalInfoSection data) {
