@@ -187,7 +187,9 @@ public class SurveyService {
         educationalBackground.getAcademicHonors(),
         educationalBackground.getAcademicHonorsOtherText(),
         educationalBackground.getPursuedFurtherStudies(),
-        educationalBackground.getFurtherDegreeProgram()
+        educationalBackground.getFurtherDegreeProgram(),
+        educationalBackground.getFurtherStudiesReason(),
+        educationalBackground.getFurtherStudiesReasonOtherText()
     );
     }
 
@@ -271,8 +273,18 @@ public class SurveyService {
         entity.setYearGraduatedOther(data.yearGraduatedOther());
         entity.setAcademicHonors(extractSelectedKeys(data.academicHonors()));
         entity.setAcademicHonorsOtherText(data.academicHonorsOtherText());
-        entity.setPursuedFurtherStudies("Yes".equals(data.pursuedFurtherStudies()));
-        entity.setFurtherDegreeProgram(data.furtherDegreeProgram());
+
+        boolean pursuedFurtherStudies = isYes(data.pursuedFurtherStudies());
+        entity.setPursuedFurtherStudies(pursuedFurtherStudies);
+
+        entity.setFurtherDegreeProgram(pursuedFurtherStudies ? data.furtherDegreeProgram() : null);
+        entity.setFurtherStudiesReason(pursuedFurtherStudies ? data.furtherStudiesReason() : null);
+        entity.setFurtherStudiesReasonOtherText(
+            pursuedFurtherStudies && isOther(data.furtherStudiesReason())
+                ? data.furtherStudiesReasonOtherText()
+                : null
+        );
+
         educationRepo.save(entity);
     }
 
@@ -358,5 +370,13 @@ public class SurveyService {
                 .sorted()
                 .collect(Collectors.joining(","));
         return result.isEmpty() ? null : result;
+    }
+
+    private boolean isYes(String value) {
+        return value != null && "yes".equalsIgnoreCase(value.trim());
+    }
+
+    private boolean isOther(String value) {
+        return value != null && "other".equalsIgnoreCase(value.trim());
     }
 }

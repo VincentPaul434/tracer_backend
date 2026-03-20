@@ -39,7 +39,9 @@ public record SurveyResponseDetail(
         String academicHonors,
         String academicHonorsOtherText,
         Boolean pursuedFurtherStudies,
-        String furtherDegreeProgram
+        String furtherDegreeProgram,
+        String furtherStudiesReason,
+        String furtherStudiesReasonOtherText
     ) {}
 
     public record LicensureExaminationSection(

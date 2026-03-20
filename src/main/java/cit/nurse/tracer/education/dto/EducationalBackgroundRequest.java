@@ -28,5 +28,9 @@ public record EducationalBackgroundRequest(
     @NotBlank(message = "Further studies answer is required")
     String pursuedFurtherStudies,
 
-    String furtherDegreeProgram
+    String furtherDegreeProgram,
+
+    String furtherStudiesReason,
+
+    String furtherStudiesReasonOtherText
 ) {}

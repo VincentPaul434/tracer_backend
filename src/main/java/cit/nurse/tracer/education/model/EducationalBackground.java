@@ -48,6 +48,12 @@ public class EducationalBackground extends BaseEntity {
     @Column(name = "further_degree_program")
     private String furtherDegreeProgram;
 
+    @Column(name = "further_studies_reason")
+    private String furtherStudiesReason;
+
+    @Column(name = "further_studies_reason_other_text")
+    private String furtherStudiesReasonOtherText;
+
     public UUID getId() {
         return id;
     }
@@ -114,5 +120,21 @@ public class EducationalBackground extends BaseEntity {
 
     public void setFurtherDegreeProgram(String furtherDegreeProgram) {
         this.furtherDegreeProgram = furtherDegreeProgram;
+    }
+
+    public String getFurtherStudiesReason() {
+        return furtherStudiesReason;
+    }
+
+    public void setFurtherStudiesReason(String furtherStudiesReason) {
+        this.furtherStudiesReason = furtherStudiesReason;
+    }
+
+    public String getFurtherStudiesReasonOtherText() {
+        return furtherStudiesReasonOtherText;
+    }
+
+    public void setFurtherStudiesReasonOtherText(String furtherStudiesReasonOtherText) {
+        this.furtherStudiesReasonOtherText = furtherStudiesReasonOtherText;
     }
 }

@@ -1,6 +1,7 @@
 package cit.nurse.tracer.submission.dto;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.Valid;
@@ -79,6 +80,14 @@ public record MasterSurveyRequest(
             @JsonProperty("academicHonorsOtherText") String academicHonorsOtherText,
             @JsonProperty("pursuedFurtherStudies") String pursuedFurtherStudies,
             @JsonProperty("furtherDegreeProgram") String furtherDegreeProgram,
+            @JsonProperty("furtherStudiesReason") String furtherStudiesReason,
+            @JsonProperty("furtherStudiesReasonOtherText") String furtherStudiesReasonOtherText,
+            @JsonProperty("advancedStudiesReason") String advancedStudiesReason,
+            @JsonProperty("advancedStudiesReasonOtherText") String advancedStudiesReasonOtherText,
+            @JsonProperty("reasonForAdvancedStudies") String reasonForAdvancedStudies,
+            @JsonProperty("reasonForAdvancedStudiesOtherText") String reasonForAdvancedStudiesOtherText,
+            @JsonProperty("whatMadeYouPursueAdvanceStudies") String whatMadeYouPursueAdvanceStudies,
+            @JsonProperty("whatMadeYouPursueAdvanceStudiesOther") String whatMadeYouPursueAdvanceStudiesOther,
 
             @JsonProperty("hasTakenPnle") String hasTakenPnle,
             @JsonProperty("licensureStatus") String licensureStatus,
@@ -132,7 +141,19 @@ public record MasterSurveyRequest(
             academicHonors,
             academicHonorsOtherText,
             pursuedFurtherStudies,
-            furtherDegreeProgram
+            furtherDegreeProgram,
+            firstNonBlank(
+                furtherStudiesReason,
+                advancedStudiesReason,
+                reasonForAdvancedStudies,
+                whatMadeYouPursueAdvanceStudies
+            ),
+            firstNonBlank(
+                furtherStudiesReasonOtherText,
+                advancedStudiesReasonOtherText,
+                reasonForAdvancedStudiesOtherText,
+                whatMadeYouPursueAdvanceStudiesOther
+            )
         );
 
         LicensureExaminationSection resolvedLicensureExamination = licensureExamination != null
@@ -193,6 +214,18 @@ public record MasterSurveyRequest(
         );
         }
 
+    private static String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return null;
+    }
+
     // ── Nested section records ─────────────────────────────────────
 
     public record PersonalInfoSection(
@@ -234,7 +267,13 @@ public record MasterSurveyRequest(
 
         @NotBlank(message = "Pursued further studies answer is required")
         String pursuedFurtherStudies,       // "Yes" | "No"
-        String furtherDegreeProgram
+        String furtherDegreeProgram,
+
+        @JsonAlias({"advancedStudiesReason", "reasonForAdvancedStudies", "whatMadeYouPursueAdvanceStudies"})
+        String furtherStudiesReason,
+
+        @JsonAlias({"advancedStudiesReasonOtherText", "reasonForAdvancedStudiesOtherText", "whatMadeYouPursueAdvanceStudiesOther"})
+        String furtherStudiesReasonOtherText
     ) {}
 
     public record LicensureExaminationSection(
