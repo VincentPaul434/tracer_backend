@@ -11,11 +11,14 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 @RestController
 @RequestMapping("/api/v1/admin")
@@ -54,6 +57,15 @@ public class AdminController {
             @PageableDefault(size = DEFAULT_PAGE_SIZE, sort = "submittedAt", direction = Sort.Direction.DESC) Pageable pageable
     ) {
         return ResponseEntity.ok(surveyService.getSurveyResponses(toSafePageable(pageable)));
+    }
+
+    @GetMapping(value = "/export-csv", produces = "text/csv")
+    public ResponseEntity<StreamingResponseBody> exportCsv() {
+        StreamingResponseBody responseBody = outputStream -> surveyService.exportSurveyResponsesCsv(outputStream);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=alumni_survey_results.csv")
+                .contentType(MediaType.parseMediaType("text/csv"))
+                .body(responseBody);
     }
 
     private Pageable toSafePageable(Pageable pageable) {
