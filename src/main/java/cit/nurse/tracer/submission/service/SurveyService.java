@@ -17,16 +17,25 @@ import cit.nurse.tracer.submission.dto.SurveyResponseDetail;
 import cit.nurse.tracer.submission.dto.SurveySubmissionResponse;
 import cit.nurse.tracer.submission.model.SurveySubmission;
 import cit.nurse.tracer.submission.repository.SurveySubmissionRepository;
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVPrinter;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,6 +43,57 @@ import org.springframework.transaction.annotation.Transactional;
 public class SurveyService {
 
     private static final String SURVEY_RESPONSES_CACHE = "surveyResponsesPage";
+    private static final int EXPORT_BATCH_SIZE = 500;
+    private static final String[] CSV_HEADERS = {
+            "submission_id",
+            "email",
+            "has_accepted_privacy",
+            "status",
+            "submitted_at",
+            "created_at",
+            "updated_at",
+            "personal_full_name",
+            "personal_gender",
+            "personal_gender_other",
+            "personal_civil_status",
+            "personal_civil_status_other",
+            "personal_birthday",
+            "personal_residence",
+            "personal_contact_information",
+            "education_degree_program_completed",
+            "education_year_graduated",
+            "education_year_graduated_other",
+            "education_academic_honors",
+            "education_academic_honors_other_text",
+            "education_pursued_further_studies",
+            "education_further_degree_program",
+            "licensure_has_taken_pnle",
+            "licensure_status",
+            "licensure_pnle_year_passed",
+            "licensure_pnle_year_passed_other",
+            "licensure_exam_take_count",
+            "employment_status",
+            "employment_job_related_to_degree",
+            "employment_sector",
+            "employment_sector_other",
+            "employment_position_designation",
+            "employment_position_designation_other",
+            "employment_first_job_duration",
+            "employment_first_job_sources",
+            "employment_first_job_source_other_text",
+            "employment_estimated_monthly_salary",
+            "employment_unemployment_reasons",
+            "employment_unemployment_reason_other_text",
+            "evaluation_relevance_skills",
+            "evaluation_career_preparation_level",
+            "evaluation_nursing_program_aspect",
+            "evaluation_nursing_program_suggestion",
+            "communication_invitation_channels",
+            "communication_invitation_channel_other_text",
+            "communication_update_frequency",
+            "communication_alumni_group_willingness",
+            "communication_alumni_platform"
+    };
 
     private final SurveySubmissionRepository submissionRepo;
     private final PersonalInfoRepository personalInfoRepo;
@@ -94,44 +154,206 @@ public class SurveyService {
         key = "#pageable.pageNumber + ':' + #pageable.pageSize + ':' + #pageable.sort.toString()"
     )
     public Page<SurveyResponseDetail> getSurveyResponses(Pageable pageable) {
-    Page<SurveySubmission> submissionsPage = submissionRepo.findAll(pageable);
-    if (submissionsPage.isEmpty()) {
-        return Page.empty(pageable);
+        Page<SurveySubmission> submissionsPage = submissionRepo.findAll(pageable);
+        if (submissionsPage.isEmpty()) {
+            return Page.empty(pageable);
+        }
+
+        List<SurveySubmission> submissions = submissionsPage.getContent();
+        SurveySections sections = loadSurveySections(submissions);
+
+        List<SurveyResponseDetail> responses = submissions.stream()
+                .map(submission -> toSurveyResponseDetail(
+                        submission,
+                        sections.personalInfoBySubmissionId().get(submission.getId()),
+                        sections.educationBySubmissionId().get(submission.getId()),
+                        sections.licensureBySubmissionId().get(submission.getId()),
+                        sections.employmentBySubmissionId().get(submission.getId()),
+                        sections.evaluationBySubmissionId().get(submission.getId()),
+                        sections.communicationBySubmissionId().get(submission.getId())
+                ))
+                .toList();
+
+        return new PageImpl<>(responses, pageable, submissionsPage.getTotalElements());
     }
 
-    List<SurveySubmission> submissions = submissionsPage.getContent();
+    @Transactional(readOnly = true)
+    public void exportSurveyResponsesCsv(OutputStream outputStream) throws IOException {
+        CSVFormat csvFormat = CSVFormat.DEFAULT.builder()
+                .setHeader(CSV_HEADERS)
+                .setSkipHeaderRecord(false)
+                .build();
 
-    Map<UUID, PersonalInfo> personalInfoBySubmissionId = personalInfoRepo.findBySubmissionIn(submissions).stream()
-        .collect(Collectors.toMap(item -> item.getSubmission().getId(), Function.identity(), (left, right) -> left));
+        try (
+                BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(outputStream, StandardCharsets.UTF_8));
+                CSVPrinter csvPrinter = new CSVPrinter(writer, csvFormat)
+        ) {
+            Pageable pageable = PageRequest.of(
+                    0,
+                    EXPORT_BATCH_SIZE,
+                    Sort.by(Sort.Direction.ASC, "submittedAt").and(Sort.by(Sort.Direction.ASC, "id"))
+            );
 
-    Map<UUID, EducationalBackground> educationBySubmissionId = educationRepo.findBySubmissionIn(submissions).stream()
-        .collect(Collectors.toMap(item -> item.getSubmission().getId(), Function.identity(), (left, right) -> left));
+            Page<SurveySubmission> submissionsPage;
+            do {
+                submissionsPage = submissionRepo.findAll(pageable);
+                if (submissionsPage.isEmpty()) {
+                    break;
+                }
 
-    Map<UUID, LicensureExamination> licensureBySubmissionId = licensureRepo.findBySubmissionIn(submissions).stream()
-        .collect(Collectors.toMap(item -> item.getSubmission().getId(), Function.identity(), (left, right) -> left));
+                List<SurveySubmission> submissions = submissionsPage.getContent();
+                SurveySections sections = loadSurveySections(submissions);
 
-    Map<UUID, EmploymentData> employmentBySubmissionId = employmentRepo.findBySubmissionIn(submissions).stream()
-        .collect(Collectors.toMap(item -> item.getSubmission().getId(), Function.identity(), (left, right) -> left));
+                for (SurveySubmission submission : submissions) {
+                    writeCsvRecord(
+                            csvPrinter,
+                            submission,
+                            sections.personalInfoBySubmissionId().get(submission.getId()),
+                            sections.educationBySubmissionId().get(submission.getId()),
+                            sections.licensureBySubmissionId().get(submission.getId()),
+                            sections.employmentBySubmissionId().get(submission.getId()),
+                            sections.evaluationBySubmissionId().get(submission.getId()),
+                            sections.communicationBySubmissionId().get(submission.getId())
+                    );
+                }
 
-    Map<UUID, ProgramEvaluation> evaluationBySubmissionId = evaluationRepo.findBySubmissionIn(submissions).stream()
-        .collect(Collectors.toMap(item -> item.getSubmission().getId(), Function.identity(), (left, right) -> left));
+                csvPrinter.flush();
+                pageable = submissionsPage.nextPageable();
+            } while (submissionsPage.hasNext());
+        }
+    }
 
-    Map<UUID, CommunicationPreference> communicationBySubmissionId = communicationRepo.findBySubmissionIn(submissions).stream()
-        .collect(Collectors.toMap(item -> item.getSubmission().getId(), Function.identity(), (left, right) -> left));
+    private SurveySections loadSurveySections(List<SurveySubmission> submissions) {
+        Map<UUID, PersonalInfo> personalInfoBySubmissionId = toSubmissionIdMap(
+                personalInfoRepo.findBySubmissionIn(submissions),
+                PersonalInfo::getSubmission
+        );
 
-    List<SurveyResponseDetail> responses = submissions.stream()
-        .map(submission -> toSurveyResponseDetail(
-            submission,
-            personalInfoBySubmissionId.get(submission.getId()),
-            educationBySubmissionId.get(submission.getId()),
-            licensureBySubmissionId.get(submission.getId()),
-            employmentBySubmissionId.get(submission.getId()),
-            evaluationBySubmissionId.get(submission.getId()),
-            communicationBySubmissionId.get(submission.getId())
-        ))
-        .toList();
+        Map<UUID, EducationalBackground> educationBySubmissionId = toSubmissionIdMap(
+                educationRepo.findBySubmissionIn(submissions),
+                EducationalBackground::getSubmission
+        );
 
-    return new PageImpl<>(responses, pageable, submissionsPage.getTotalElements());
+        Map<UUID, LicensureExamination> licensureBySubmissionId = toSubmissionIdMap(
+                licensureRepo.findBySubmissionIn(submissions),
+                LicensureExamination::getSubmission
+        );
+
+        Map<UUID, EmploymentData> employmentBySubmissionId = toSubmissionIdMap(
+                employmentRepo.findBySubmissionIn(submissions),
+                EmploymentData::getSubmission
+        );
+
+        Map<UUID, ProgramEvaluation> evaluationBySubmissionId = toSubmissionIdMap(
+                evaluationRepo.findBySubmissionIn(submissions),
+                ProgramEvaluation::getSubmission
+        );
+
+        Map<UUID, CommunicationPreference> communicationBySubmissionId = toSubmissionIdMap(
+                communicationRepo.findBySubmissionIn(submissions),
+                CommunicationPreference::getSubmission
+        );
+
+        return new SurveySections(
+                personalInfoBySubmissionId,
+                educationBySubmissionId,
+                licensureBySubmissionId,
+                employmentBySubmissionId,
+                evaluationBySubmissionId,
+                communicationBySubmissionId
+        );
+    }
+
+    private <T> Map<UUID, T> toSubmissionIdMap(List<T> entities, Function<T, SurveySubmission> submissionExtractor) {
+        return entities.stream()
+                .collect(Collectors.toMap(
+                        entity -> submissionExtractor.apply(entity).getId(),
+                        Function.identity(),
+                        (left, right) -> left
+                ));
+    }
+
+    private void writeCsvRecord(
+            CSVPrinter csvPrinter,
+            SurveySubmission submission,
+            PersonalInfo personalInfo,
+            EducationalBackground educationalBackground,
+            LicensureExamination licensureExamination,
+            EmploymentData employmentData,
+            ProgramEvaluation programEvaluation,
+            CommunicationPreference communicationPreference
+    ) throws IOException {
+        csvPrinter.printRecord(
+                toCsvValue(submission.getId()),
+                toCsvValue(submission.getEmail()),
+                toCsvValue(submission.isHasAcceptedPrivacy()),
+                toCsvValue(submission.getStatus() == null ? null : submission.getStatus().name()),
+                toCsvValue(submission.getSubmittedAt()),
+                toCsvValue(submission.getCreatedAt()),
+                toCsvValue(submission.getUpdatedAt()),
+                toCsvValue(personalInfo, PersonalInfo::getFullName),
+                toCsvValue(personalInfo, PersonalInfo::getGender),
+                toCsvValue(personalInfo, PersonalInfo::getGenderOther),
+                toCsvValue(personalInfo, PersonalInfo::getCivilStatus),
+                toCsvValue(personalInfo, PersonalInfo::getCivilStatusOther),
+                toCsvValue(personalInfo, PersonalInfo::getBirthday),
+                toCsvValue(personalInfo, PersonalInfo::getResidence),
+                toCsvValue(personalInfo, PersonalInfo::getContactInformation),
+                toCsvValue(educationalBackground, EducationalBackground::getDegreeProgramCompleted),
+                toCsvValue(educationalBackground, EducationalBackground::getYearGraduated),
+                toCsvValue(educationalBackground, EducationalBackground::getYearGraduatedOther),
+                toCsvValue(educationalBackground, EducationalBackground::getAcademicHonors),
+                toCsvValue(educationalBackground, EducationalBackground::getAcademicHonorsOtherText),
+                toCsvValue(educationalBackground, EducationalBackground::getPursuedFurtherStudies),
+                toCsvValue(educationalBackground, EducationalBackground::getFurtherDegreeProgram),
+                toCsvValue(licensureExamination, LicensureExamination::getHasTakenPnle),
+                toCsvValue(licensureExamination, LicensureExamination::getLicensureStatus),
+                toCsvValue(licensureExamination, LicensureExamination::getPnleYearPassed),
+                toCsvValue(licensureExamination, LicensureExamination::getPnleYearPassedOther),
+                toCsvValue(licensureExamination, LicensureExamination::getExamTakeCount),
+                toCsvValue(employmentData, EmploymentData::getEmploymentStatus),
+                toCsvValue(employmentData, EmploymentData::getJobRelatedToDegree),
+                toCsvValue(employmentData, EmploymentData::getEmploymentSector),
+                toCsvValue(employmentData, EmploymentData::getEmploymentSectorOther),
+                toCsvValue(employmentData, EmploymentData::getPositionDesignation),
+                toCsvValue(employmentData, EmploymentData::getPositionDesignationOther),
+                toCsvValue(employmentData, EmploymentData::getFirstJobDuration),
+                toCsvValue(employmentData, EmploymentData::getFirstJobSources),
+                toCsvValue(employmentData, EmploymentData::getFirstJobSourceOtherText),
+                toCsvValue(employmentData, EmploymentData::getEstimatedMonthlySalary),
+                toCsvValue(employmentData, EmploymentData::getUnemploymentReasons),
+                toCsvValue(employmentData, EmploymentData::getUnemploymentReasonOtherText),
+                toCsvValue(programEvaluation, ProgramEvaluation::getRelevanceSkills),
+                toCsvValue(programEvaluation, ProgramEvaluation::getCareerPreparationLevel),
+                toCsvValue(programEvaluation, ProgramEvaluation::getNursingProgramAspect),
+                toCsvValue(programEvaluation, ProgramEvaluation::getNursingProgramSuggestion),
+                toCsvValue(communicationPreference, CommunicationPreference::getInvitationChannels),
+                toCsvValue(communicationPreference, CommunicationPreference::getInvitationChannelOtherText),
+                toCsvValue(communicationPreference, CommunicationPreference::getUpdateFrequency),
+                toCsvValue(communicationPreference, CommunicationPreference::getAlumniGroupWillingness),
+                toCsvValue(communicationPreference, CommunicationPreference::getAlumniPlatform)
+        );
+    }
+
+    private String toCsvValue(Object value) {
+        return value == null ? "" : value.toString();
+    }
+
+    private <T> String toCsvValue(T source, Function<T, ?> extractor) {
+        if (source == null) {
+            return "";
+        }
+        return toCsvValue(extractor.apply(source));
+    }
+
+    private record SurveySections(
+            Map<UUID, PersonalInfo> personalInfoBySubmissionId,
+            Map<UUID, EducationalBackground> educationBySubmissionId,
+            Map<UUID, LicensureExamination> licensureBySubmissionId,
+            Map<UUID, EmploymentData> employmentBySubmissionId,
+            Map<UUID, ProgramEvaluation> evaluationBySubmissionId,
+            Map<UUID, CommunicationPreference> communicationBySubmissionId
+    ) {
     }
 
     private SurveyResponseDetail toSurveyResponseDetail(
