@@ -26,6 +26,7 @@ import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -176,24 +177,20 @@ public class SurveyService {
         LocalDateTime submittedFrom = filter.submittedFrom() == null ? null : filter.submittedFrom().atStartOfDay();
         LocalDateTime submittedToExclusive = filter.submittedTo() == null ? null : filter.submittedTo().plusDays(1).atStartOfDay();
 
-        Page<SurveySubmission> submissionsPage = submissionRepo.findAllAdminFiltered(
-            normalizeFilterValue(filter.query()),
-            normalizeStatus(filter.status()),
-            normalizeFilterValue(filter.employmentStatus()),
-            normalizeFilterValue(filter.licensureStatus()),
-            submittedFrom,
-            submittedToExclusive,
-            pageable
-        );
+            String query = normalizeFilterValue(filter.query());
+            String status = normalizeStatus(filter.status());
+            String employmentStatus = normalizeFilterValue(filter.employmentStatus());
+            String licensureStatus = normalizeFilterValue(filter.licensureStatus());
 
-        if (submissionsPage.isEmpty()) {
+            Sort sort = pageable.getSort().isUnsorted() ? Sort.by(Sort.Direction.DESC, "submittedAt") : pageable.getSort();
+            List<SurveySubmission> submissions = submissionRepo.findAll(sort);
+            if (submissions.isEmpty()) {
             return Page.empty(pageable);
         }
 
-        List<SurveySubmission> submissions = submissionsPage.getContent();
         SurveySections sections = loadSurveySections(submissions);
 
-        List<SurveyResponseDetail> responses = submissions.stream()
+            List<SurveyResponseDetail> filteredResponses = submissions.stream()
                 .map(submission -> toSurveyResponseDetail(
                         submission,
                         sections.personalInfoBySubmissionId().get(submission.getId()),
@@ -203,9 +200,14 @@ public class SurveyService {
                         sections.evaluationBySubmissionId().get(submission.getId()),
                         sections.communicationBySubmissionId().get(submission.getId())
                 ))
+                    .filter(response -> matchesFilters(response, query, status, employmentStatus, licensureStatus, submittedFrom, submittedToExclusive))
                 .toList();
 
-        return new PageImpl<>(responses, pageable, submissionsPage.getTotalElements());
+                int fromIndex = (int) Math.min(pageable.getOffset(), filteredResponses.size());
+                int toIndex = Math.min(fromIndex + pageable.getPageSize(), filteredResponses.size());
+                List<SurveyResponseDetail> pageContent = filteredResponses.subList(fromIndex, toIndex);
+
+                return new PageImpl<>(pageContent, pageable, filteredResponses.size());
     }
 
     @Transactional(readOnly = true)
@@ -262,16 +264,71 @@ public class SurveyService {
         return normalized.isEmpty() ? null : normalized;
     }
 
-    private SurveySubmission.Status normalizeStatus(String status) {
+    private String normalizeStatus(String status) {
         String normalizedStatus = normalizeFilterValue(status);
         if (normalizedStatus == null) {
             return null;
         }
-        try {
-            return SurveySubmission.Status.valueOf(normalizedStatus.toUpperCase());
-        } catch (IllegalArgumentException ex) {
+        String upper = normalizedStatus.toUpperCase(Locale.ROOT);
+        if (!"DRAFT".equals(upper) && !"FINALIZED".equals(upper)) {
             throw new IllegalArgumentException("Invalid status filter. Allowed values are DRAFT or FINALIZED.");
         }
+        return upper;
+    }
+
+    private boolean matchesFilters(
+            SurveyResponseDetail response,
+            String query,
+            String status,
+            String employmentStatus,
+            String licensureStatus,
+            LocalDateTime submittedFrom,
+            LocalDateTime submittedToExclusive
+    ) {
+        if (query != null) {
+            String normalizedQuery = query.toLowerCase(Locale.ROOT);
+            String email = response.email() == null ? "" : response.email().toLowerCase(Locale.ROOT);
+            String fullName = response.personalInfo() == null || response.personalInfo().fullName() == null
+                    ? ""
+                    : response.personalInfo().fullName().toLowerCase(Locale.ROOT);
+            if (!email.contains(normalizedQuery) && !fullName.contains(normalizedQuery)) {
+                return false;
+            }
+        }
+
+        if (status != null) {
+            if (response.status() == null || !status.equalsIgnoreCase(response.status())) {
+                return false;
+            }
+        }
+
+        if (employmentStatus != null) {
+            String value = response.employment() == null ? null : response.employment().employmentStatus();
+            if (value == null || !employmentStatus.equalsIgnoreCase(value)) {
+                return false;
+            }
+        }
+
+        if (licensureStatus != null) {
+            String value = response.licensureExamination() == null ? null : response.licensureExamination().licensureStatus();
+            if (value == null || !licensureStatus.equalsIgnoreCase(value)) {
+                return false;
+            }
+        }
+
+        if (submittedFrom != null) {
+            if (response.submittedAt() == null || response.submittedAt().isBefore(submittedFrom)) {
+                return false;
+            }
+        }
+
+        if (submittedToExclusive != null) {
+            if (response.submittedAt() == null || !response.submittedAt().isBefore(submittedToExclusive)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     @Transactional(readOnly = true)
