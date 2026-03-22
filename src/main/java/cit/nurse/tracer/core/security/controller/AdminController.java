@@ -1,6 +1,9 @@
 package cit.nurse.tracer.core.security.controller;
 
 import cit.nurse.tracer.submission.dto.SurveyResponseDetail;
+import cit.nurse.tracer.submission.dto.AdminSurveyResponseFilter;
+import cit.nurse.tracer.submission.dto.SurveyResponseSummary;
+import java.time.LocalDate;
 import cit.nurse.tracer.submission.service.SurveyService;
 import java.util.List;
 import java.util.Map;
@@ -15,7 +18,9 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
@@ -54,9 +59,43 @@ public class AdminController {
 
     @GetMapping("/survey-responses")
     public ResponseEntity<Page<SurveyResponseDetail>> getSurveyResponses(
+            @RequestParam(required = false) String query,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String employmentStatus,
+            @RequestParam(required = false) String licensureStatus,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate submittedFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate submittedTo,
             @PageableDefault(size = DEFAULT_PAGE_SIZE, sort = "submittedAt", direction = Sort.Direction.DESC) Pageable pageable
     ) {
-        return ResponseEntity.ok(surveyService.getSurveyResponses(toSafePageable(pageable)));
+        AdminSurveyResponseFilter filter = new AdminSurveyResponseFilter(
+            query,
+            status,
+            employmentStatus,
+            licensureStatus,
+            submittedFrom,
+            submittedTo
+        );
+        return ResponseEntity.ok(surveyService.getSurveyResponses(toSafePageable(pageable), filter));
+        }
+
+        @GetMapping("/survey-responses/summary")
+        public ResponseEntity<SurveyResponseSummary> getSurveyResponsesSummary(
+            @RequestParam(required = false) String query,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String employmentStatus,
+            @RequestParam(required = false) String licensureStatus,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate submittedFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate submittedTo
+        ) {
+        AdminSurveyResponseFilter filter = new AdminSurveyResponseFilter(
+            query,
+            status,
+            employmentStatus,
+            licensureStatus,
+            submittedFrom,
+            submittedTo
+        );
+        return ResponseEntity.ok(surveyService.getSurveyResponseSummary(filter));
     }
 
     @GetMapping(value = "/export-csv", produces = "text/csv")

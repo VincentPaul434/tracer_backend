@@ -13,7 +13,9 @@ import cit.nurse.tracer.licensure.repository.LicensureExaminationRepository;
 import cit.nurse.tracer.personalinfo.model.PersonalInfo;
 import cit.nurse.tracer.personalinfo.repository.PersonalInfoRepository;
 import cit.nurse.tracer.submission.dto.MasterSurveyRequest;
+import cit.nurse.tracer.submission.dto.AdminSurveyResponseFilter;
 import cit.nurse.tracer.submission.dto.SurveyResponseDetail;
+import cit.nurse.tracer.submission.dto.SurveyResponseSummary;
 import cit.nurse.tracer.submission.dto.SurveySubmissionResponse;
 import cit.nurse.tracer.submission.model.SurveySubmission;
 import cit.nurse.tracer.submission.repository.SurveySubmissionRepository;
@@ -22,8 +24,10 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -154,7 +158,34 @@ public class SurveyService {
             key = "#pageable.pageNumber + ':' + #pageable.pageSize + ':' + #pageable.sort.toString()"
     )
     public Page<SurveyResponseDetail> getSurveyResponses(Pageable pageable) {
-        Page<SurveySubmission> submissionsPage = submissionRepo.findAll(pageable);
+        return getSurveyResponses(pageable, new AdminSurveyResponseFilter(null, null, null, null, null, null));
+        }
+
+        @Transactional(readOnly = true)
+        @Cacheable(
+            value = SURVEY_RESPONSES_CACHE,
+            key = "#pageable.pageNumber + ':' + #pageable.pageSize + ':' + #pageable.sort.toString()"
+                + " + ':' + (#filter.query() == null ? '' : #filter.query())"
+                + " + ':' + (#filter.status() == null ? '' : #filter.status())"
+                + " + ':' + (#filter.employmentStatus() == null ? '' : #filter.employmentStatus())"
+                + " + ':' + (#filter.licensureStatus() == null ? '' : #filter.licensureStatus())"
+                + " + ':' + (#filter.submittedFrom() == null ? '' : #filter.submittedFrom())"
+                + " + ':' + (#filter.submittedTo() == null ? '' : #filter.submittedTo())"
+        )
+        public Page<SurveyResponseDetail> getSurveyResponses(Pageable pageable, AdminSurveyResponseFilter filter) {
+        LocalDateTime submittedFrom = filter.submittedFrom() == null ? null : filter.submittedFrom().atStartOfDay();
+        LocalDateTime submittedToExclusive = filter.submittedTo() == null ? null : filter.submittedTo().plusDays(1).atStartOfDay();
+
+        Page<SurveySubmission> submissionsPage = submissionRepo.findAllAdminFiltered(
+            normalizeFilterValue(filter.query()),
+            normalizeStatus(filter.status()),
+            normalizeFilterValue(filter.employmentStatus()),
+            normalizeFilterValue(filter.licensureStatus()),
+            submittedFrom,
+            submittedToExclusive,
+            pageable
+        );
+
         if (submissionsPage.isEmpty()) {
             return Page.empty(pageable);
         }
@@ -175,6 +206,72 @@ public class SurveyService {
                 .toList();
 
         return new PageImpl<>(responses, pageable, submissionsPage.getTotalElements());
+    }
+
+    @Transactional(readOnly = true)
+    public SurveyResponseSummary getSurveyResponseSummary(AdminSurveyResponseFilter filter) {
+        long total = 0;
+        long finalized = 0;
+        long employed = 0;
+        long pnlePassed = 0;
+
+        int pageNumber = 0;
+        Page<SurveyResponseDetail> page;
+        do {
+            page = getSurveyResponses(
+                PageRequest.of(pageNumber, EXPORT_BATCH_SIZE, Sort.by(Sort.Direction.DESC, "submittedAt")),
+                filter
+            );
+
+            total += page.getNumberOfElements();
+            finalized += page.getContent().stream()
+                .filter(response -> "FINALIZED".equalsIgnoreCase(response.status()))
+                .count();
+            employed += page.getContent().stream()
+                .map(SurveyResponseDetail::employment)
+                .filter(Objects::nonNull)
+                .map(SurveyResponseDetail.EmploymentSection::employmentStatus)
+                .filter(Objects::nonNull)
+                .filter(status -> "Employed".equalsIgnoreCase(status) || "Self employed".equalsIgnoreCase(status))
+                .count();
+            pnlePassed += page.getContent().stream()
+                .map(SurveyResponseDetail::licensureExamination)
+                .filter(Objects::nonNull)
+                .map(SurveyResponseDetail.LicensureExaminationSection::licensureStatus)
+                .filter(Objects::nonNull)
+                .filter(status -> "Passed".equalsIgnoreCase(status))
+                .count();
+
+            pageNumber++;
+        } while (page.hasNext());
+
+        return new SurveyResponseSummary(
+                total,
+                finalized,
+                Math.max(total - finalized, 0),
+                employed,
+                pnlePassed
+        );
+    }
+
+    private String normalizeFilterValue(String value) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = value.trim();
+        return normalized.isEmpty() ? null : normalized;
+    }
+
+    private SurveySubmission.Status normalizeStatus(String status) {
+        String normalizedStatus = normalizeFilterValue(status);
+        if (normalizedStatus == null) {
+            return null;
+        }
+        try {
+            return SurveySubmission.Status.valueOf(normalizedStatus.toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException("Invalid status filter. Allowed values are DRAFT or FINALIZED.");
+        }
     }
 
     @Transactional(readOnly = true)
