@@ -172,6 +172,7 @@ public class SurveyService {
                 + " + ':' + (#filter.licensureStatus() == null ? '' : #filter.licensureStatus())"
                 + " + ':' + (#filter.submittedFrom() == null ? '' : #filter.submittedFrom())"
                 + " + ':' + (#filter.submittedTo() == null ? '' : #filter.submittedTo())"
+                + " + ':' + (#filter.yearGraduated() == null ? '' : #filter.yearGraduated())"
         )
     public Page<SurveyResponseDetail> getSurveyResponses(Pageable pageable, AdminSurveyResponseFilter filter) {
         LocalDateTime submittedFrom = filter.submittedFrom() == null ? null : filter.submittedFrom().atStartOfDay();
