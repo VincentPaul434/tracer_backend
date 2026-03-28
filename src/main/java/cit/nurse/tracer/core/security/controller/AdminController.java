@@ -65,6 +65,7 @@ public class AdminController {
             @RequestParam(required = false) String licensureStatus,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate submittedFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate submittedTo,
+            @RequestParam(required = false) String yearGraduated,
             @PageableDefault(size = DEFAULT_PAGE_SIZE, sort = "submittedAt", direction = Sort.Direction.DESC) Pageable pageable
     ) {
         AdminSurveyResponseFilter filter = new AdminSurveyResponseFilter(
@@ -73,10 +74,11 @@ public class AdminController {
             employmentStatus,
             licensureStatus,
             submittedFrom,
-            submittedTo
+            submittedTo,
+            yearGraduated
         );
         return ResponseEntity.ok(surveyService.getSurveyResponses(toSafePageable(pageable), filter));
-        }
+    }
 
         @GetMapping("/survey-responses/summary")
         public ResponseEntity<SurveyResponseSummary> getSurveyResponsesSummary(
@@ -85,18 +87,20 @@ public class AdminController {
             @RequestParam(required = false) String employmentStatus,
             @RequestParam(required = false) String licensureStatus,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate submittedFrom,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate submittedTo
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate submittedTo,
+            @RequestParam(required = false) String yearGraduated
         ) {
-        AdminSurveyResponseFilter filter = new AdminSurveyResponseFilter(
-            query,
-            status,
-            employmentStatus,
-            licensureStatus,
-            submittedFrom,
-            submittedTo
-        );
-        return ResponseEntity.ok(surveyService.getSurveyResponseSummary(filter));
-    }
+            AdminSurveyResponseFilter filter = new AdminSurveyResponseFilter(
+                query,
+                status,
+                employmentStatus,
+                licensureStatus,
+                submittedFrom,
+                submittedTo,
+                yearGraduated
+            );
+            return ResponseEntity.ok(surveyService.getSurveyResponseSummary(filter));
+        }
 
     @GetMapping(value = "/export-csv", produces = "text/csv")
     public ResponseEntity<StreamingResponseBody> exportCsv() {

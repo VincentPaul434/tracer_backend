@@ -159,7 +159,7 @@ public class SurveyService {
             key = "#pageable.pageNumber + ':' + #pageable.pageSize + ':' + #pageable.sort.toString()"
     )
     public Page<SurveyResponseDetail> getSurveyResponses(Pageable pageable) {
-        return getSurveyResponses(pageable, new AdminSurveyResponseFilter(null, null, null, null, null, null));
+        return getSurveyResponses(pageable, new AdminSurveyResponseFilter(null, null, null, null, null, null, null));
         }
 
         @Transactional(readOnly = true)
@@ -173,41 +173,42 @@ public class SurveyService {
                 + " + ':' + (#filter.submittedFrom() == null ? '' : #filter.submittedFrom())"
                 + " + ':' + (#filter.submittedTo() == null ? '' : #filter.submittedTo())"
         )
-        public Page<SurveyResponseDetail> getSurveyResponses(Pageable pageable, AdminSurveyResponseFilter filter) {
+    public Page<SurveyResponseDetail> getSurveyResponses(Pageable pageable, AdminSurveyResponseFilter filter) {
         LocalDateTime submittedFrom = filter.submittedFrom() == null ? null : filter.submittedFrom().atStartOfDay();
         LocalDateTime submittedToExclusive = filter.submittedTo() == null ? null : filter.submittedTo().plusDays(1).atStartOfDay();
 
-            String query = normalizeFilterValue(filter.query());
-            String status = normalizeStatus(filter.status());
-            String employmentStatus = normalizeFilterValue(filter.employmentStatus());
-            String licensureStatus = normalizeFilterValue(filter.licensureStatus());
+        String query = normalizeFilterValue(filter.query());
+        String status = normalizeStatus(filter.status());
+        String employmentStatus = normalizeFilterValue(filter.employmentStatus());
+        String licensureStatus = normalizeFilterValue(filter.licensureStatus());
+        String yearGraduated = filter.yearGraduated();
 
-            Sort sort = pageable.getSort().isUnsorted() ? Sort.by(Sort.Direction.DESC, "submittedAt") : pageable.getSort();
-            List<SurveySubmission> submissions = submissionRepo.findAll(sort);
-            if (submissions.isEmpty()) {
+        Sort sort = pageable.getSort().isUnsorted() ? Sort.by(Sort.Direction.DESC, "submittedAt") : pageable.getSort();
+        List<SurveySubmission> submissions = submissionRepo.findAll(sort);
+        if (submissions.isEmpty()) {
             return Page.empty(pageable);
         }
 
         SurveySections sections = loadSurveySections(submissions);
 
-            List<SurveyResponseDetail> filteredResponses = submissions.stream()
-                .map(submission -> toSurveyResponseDetail(
-                        submission,
-                        sections.personalInfoBySubmissionId().get(submission.getId()),
-                        sections.educationBySubmissionId().get(submission.getId()),
-                        sections.licensureBySubmissionId().get(submission.getId()),
-                        sections.employmentBySubmissionId().get(submission.getId()),
-                        sections.evaluationBySubmissionId().get(submission.getId()),
-                        sections.communicationBySubmissionId().get(submission.getId())
-                ))
-                    .filter(response -> matchesFilters(response, query, status, employmentStatus, licensureStatus, submittedFrom, submittedToExclusive))
-                .toList();
+        List<SurveyResponseDetail> filteredResponses = submissions.stream()
+            .map(submission -> toSurveyResponseDetail(
+                    submission,
+                    sections.personalInfoBySubmissionId().get(submission.getId()),
+                    sections.educationBySubmissionId().get(submission.getId()),
+                    sections.licensureBySubmissionId().get(submission.getId()),
+                    sections.employmentBySubmissionId().get(submission.getId()),
+                    sections.evaluationBySubmissionId().get(submission.getId()),
+                    sections.communicationBySubmissionId().get(submission.getId())
+            ))
+            .filter(response -> matchesFilters(response, query, status, employmentStatus, licensureStatus, submittedFrom, submittedToExclusive, yearGraduated))
+            .toList();
 
-                int fromIndex = (int) Math.min(pageable.getOffset(), filteredResponses.size());
-                int toIndex = Math.min(fromIndex + pageable.getPageSize(), filteredResponses.size());
-                List<SurveyResponseDetail> pageContent = filteredResponses.subList(fromIndex, toIndex);
+        int fromIndex = (int) Math.min(pageable.getOffset(), filteredResponses.size());
+        int toIndex = Math.min(fromIndex + pageable.getPageSize(), filteredResponses.size());
+        List<SurveyResponseDetail> pageContent = filteredResponses.subList(fromIndex, toIndex);
 
-                return new PageImpl<>(pageContent, pageable, filteredResponses.size());
+        return new PageImpl<>(pageContent, pageable, filteredResponses.size());
     }
 
     @Transactional(readOnly = true)
@@ -276,15 +277,16 @@ public class SurveyService {
         return upper;
     }
 
-    private boolean matchesFilters(
+        private boolean matchesFilters(
             SurveyResponseDetail response,
             String query,
             String status,
             String employmentStatus,
             String licensureStatus,
             LocalDateTime submittedFrom,
-            LocalDateTime submittedToExclusive
-    ) {
+            LocalDateTime submittedToExclusive,
+            String yearGraduated
+        ) {
         if (query != null) {
             String normalizedQuery = query.toLowerCase(Locale.ROOT);
             String email = response.email() == null ? "" : response.email().toLowerCase(Locale.ROOT);
@@ -328,6 +330,34 @@ public class SurveyService {
             }
         }
 
+        // Year graduated filter (2020-2025, Other)
+        if (yearGraduated != null && !yearGraduated.equalsIgnoreCase("all")) {
+            String gradYear = null;
+            if (response.educationalBackground() != null) {
+                gradYear = response.educationalBackground().yearGraduated();
+                String gradOther = response.educationalBackground().yearGraduatedOther();
+                if (yearGraduated.equalsIgnoreCase("Other")) {
+                    // If user selected "Other", match if not 2020-2025
+                    if (gradYear != null && gradYear.matches("20(2[0-5]|[0-1][0-9])")) {
+                        return false;
+                    }
+                    // Accept if gradYear is null/empty but gradOther is filled
+                    if ((gradYear == null || gradYear.isBlank()) && gradOther != null && !gradOther.isBlank()) {
+                        return true;
+                    }
+                } else {
+                    // Match exact year
+                    if (!yearGraduated.equals(gradYear)) {
+                        return false;
+                    }
+                }
+            } else {
+                // No educational background section
+                if (!yearGraduated.equalsIgnoreCase("Other")) {
+                    return false;
+                }
+            }
+        }
         return true;
     }
 

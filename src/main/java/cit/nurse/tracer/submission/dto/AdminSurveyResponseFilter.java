@@ -8,6 +8,7 @@ public record AdminSurveyResponseFilter(
         String employmentStatus,
         String licensureStatus,
         LocalDate submittedFrom,
-        LocalDate submittedTo
+        LocalDate submittedTo,
+        String yearGraduated
 ) {
 }
