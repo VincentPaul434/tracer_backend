@@ -7,7 +7,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
 @EnableCaching
-//@EnableScheduling
+@EnableScheduling
 public class Application {
 
 	public static void main(String[] args) {
