@@ -107,6 +107,7 @@ public class SurveyService {
     private final EmploymentDataRepository employmentRepo;
     private final ProgramEvaluationRepository evaluationRepo;
     private final CommunicationPreferenceRepository communicationRepo;
+    private final AdminNotificationService adminNotificationService;
 
     public SurveyService(
             SurveySubmissionRepository submissionRepo,
@@ -115,7 +116,8 @@ public class SurveyService {
             LicensureExaminationRepository licensureRepo,
             EmploymentDataRepository employmentRepo,
             ProgramEvaluationRepository evaluationRepo,
-            CommunicationPreferenceRepository communicationRepo
+            CommunicationPreferenceRepository communicationRepo,
+            AdminNotificationService adminNotificationService
     ) {
         this.submissionRepo = submissionRepo;
         this.personalInfoRepo = personalInfoRepo;
@@ -124,6 +126,7 @@ public class SurveyService {
         this.employmentRepo = employmentRepo;
         this.evaluationRepo = evaluationRepo;
         this.communicationRepo = communicationRepo;
+        this.adminNotificationService = adminNotificationService;
     }
 
     /**
@@ -149,6 +152,13 @@ public class SurveyService {
         saveEmployment(submission, request.employment());
         saveProgramEvaluation(submission, request.programEvaluation());
         saveCommunicationPreference(submission, request.communicationPreference());
+
+        adminNotificationService.publishSurveyCompleted(
+            submission.getId(),
+            request.personalInfo().fullName(),
+            submission.getEmail(),
+            submission.getSubmittedAt()
+        );
 
         return new SurveySubmissionResponse(submission.getId(), "Survey submitted successfully.");
     }
