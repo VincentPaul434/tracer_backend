@@ -65,6 +65,7 @@ public class SurveyService {
             "personal_birthday",
             "personal_residence",
             "personal_contact_information",
+            "personal_id_image_url",
             "education_degree_program_completed",
             "education_year_graduated",
             "education_year_graduated_other",
@@ -494,6 +495,7 @@ public class SurveyService {
                 toCsvValue(personalInfo, PersonalInfo::getBirthday),
                 toCsvValue(personalInfo, PersonalInfo::getResidence),
                 toCsvValue(personalInfo, PersonalInfo::getContactInformation),
+                toCsvValue(personalInfo, PersonalInfo::getIdImageUrl),
                 toCsvValue(educationalBackground, EducationalBackground::getDegreeProgramCompleted),
                 toCsvValue(educationalBackground, EducationalBackground::getYearGraduated),
                 toCsvValue(educationalBackground, EducationalBackground::getYearGraduatedOther),
@@ -589,7 +591,8 @@ public class SurveyService {
                 personalInfo.getCivilStatusOther(),
                 personalInfo.getBirthday(),
                 personalInfo.getResidence(),
-                personalInfo.getContactInformation()
+                personalInfo.getContactInformation(),
+                personalInfo.getIdImageUrl()
         );
     }
 
@@ -679,6 +682,7 @@ public class SurveyService {
         entity.setBirthday(data.birthday());
         entity.setResidence(data.residence());
         entity.setContactInformation(data.contactInformation());
+        entity.setIdImageUrl(data.idImageUrl());
         personalInfoRepo.save(entity);
     }
 

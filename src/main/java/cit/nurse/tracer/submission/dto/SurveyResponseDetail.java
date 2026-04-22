@@ -29,7 +29,8 @@ public record SurveyResponseDetail(
         String civilStatusOther,
         LocalDate birthday,
         String residence,
-        String contactInformation
+        String contactInformation,
+        String idImageUrl
     ) {}
 
     public record EducationalBackgroundSection(

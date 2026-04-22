@@ -27,5 +27,7 @@ public record PersonalInfoRequest(
     String residence,
 
     @NotBlank(message = "Contact information is required")
-    String contactInformation
+    String contactInformation,
+
+    String idImageUrl
 ) {}

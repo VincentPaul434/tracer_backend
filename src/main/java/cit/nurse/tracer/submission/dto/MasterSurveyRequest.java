@@ -72,6 +72,7 @@ public record MasterSurveyRequest(
             @JsonProperty("birthday") @JsonFormat(pattern = "yyyy-MM-dd") LocalDate birthday,
             @JsonProperty("residence") String residence,
             @JsonProperty("contactInformation") String contactInformation,
+            @JsonProperty("idImageUrl") String idImageUrl,
 
             @JsonProperty("degreeProgramCompleted") String degreeProgramCompleted,
             @JsonProperty("yearGraduated") String yearGraduated,
@@ -129,7 +130,8 @@ public record MasterSurveyRequest(
             civilStatusOther,
             birthday,
             residence,
-            contactInformation
+            contactInformation,
+            idImageUrl
         );
 
         EducationalBackgroundSection resolvedEducationalBackground = educationalBackground != null
@@ -246,7 +248,9 @@ public record MasterSurveyRequest(
         String residence,
 
         @NotBlank(message = "Contact information is required")
-        String contactInformation
+        String contactInformation,
+
+        String idImageUrl
     ) {}
 
     public record EducationalBackgroundSection(

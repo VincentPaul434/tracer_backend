@@ -50,6 +50,9 @@ public class PersonalInfo extends BaseEntity {
     @Column(name = "contact_information")
     private String contactInformation;
 
+    @Column(name = "id_image_url", columnDefinition = "TEXT")
+    private String idImageUrl;
+
     public UUID getId() {
         return id;
     }
@@ -124,5 +127,13 @@ public class PersonalInfo extends BaseEntity {
 
     public void setContactInformation(String contactInformation) {
         this.contactInformation = contactInformation;
+    }
+
+    public String getIdImageUrl() {
+        return idImageUrl;
+    }
+
+    public void setIdImageUrl(String idImageUrl) {
+        this.idImageUrl = idImageUrl;
     }
 }
