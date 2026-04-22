@@ -2,8 +2,10 @@ package cit.nurse.tracer.core.security.controller;
 
 import cit.nurse.tracer.submission.dto.SurveyResponseDetail;
 import cit.nurse.tracer.submission.dto.AdminSurveyResponseFilter;
+import cit.nurse.tracer.submission.dto.AdminNotificationEvent;
 import cit.nurse.tracer.submission.dto.SurveyResponseSummary;
 import java.time.LocalDate;
+import cit.nurse.tracer.submission.service.AdminNotificationService;
 import cit.nurse.tracer.submission.service.SurveyService;
 import java.util.List;
 import java.util.Map;
@@ -20,10 +22,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @RestController
 @RequestMapping("/api/v1/admin")
@@ -40,9 +45,11 @@ public class AdminController {
     );
 
     private final SurveyService surveyService;
+    private final AdminNotificationService adminNotificationService;
 
-    public AdminController(SurveyService surveyService) {
+    public AdminController(SurveyService surveyService, AdminNotificationService adminNotificationService) {
         this.surveyService = surveyService;
+        this.adminNotificationService = adminNotificationService;
     }
 
     @GetMapping("/me")
@@ -109,6 +116,39 @@ public class AdminController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=alumni_survey_results.csv")
                 .contentType(MediaType.parseMediaType("text/csv"))
                 .body(responseBody);
+    }
+
+    @GetMapping(value = "/notifications/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter streamNotifications() {
+        return adminNotificationService.subscribe();
+    }
+
+    @GetMapping("/notifications/recent")
+    public ResponseEntity<List<AdminNotificationEvent>> getRecentNotifications() {
+        return ResponseEntity.ok(adminNotificationService.getRecentNotifications());
+    }
+
+    @GetMapping("/notifications/unread")
+    public ResponseEntity<List<AdminNotificationEvent>> getUnreadNotifications(Authentication authentication) {
+        return ResponseEntity.ok(adminNotificationService.getUnreadNotifications(authentication.getName()));
+    }
+
+    @PostMapping("/notifications/{notificationId}/read")
+    public ResponseEntity<Map<String, Object>> markNotificationAsRead(
+            @PathVariable java.util.UUID notificationId,
+            Authentication authentication
+    ) {
+        adminNotificationService.markAsRead(notificationId, authentication.getName());
+        return ResponseEntity.ok(Map.of("message", "Notification marked as read."));
+    }
+
+    @PostMapping("/notifications/read-all")
+    public ResponseEntity<Map<String, Object>> markAllNotificationsAsRead(Authentication authentication) {
+        int markedCount = adminNotificationService.markAllAsRead(authentication.getName());
+        return ResponseEntity.ok(Map.of(
+                "message", "All notifications marked as read.",
+                "markedCount", markedCount
+        ));
     }
 
     private Pageable toSafePageable(Pageable pageable) {
