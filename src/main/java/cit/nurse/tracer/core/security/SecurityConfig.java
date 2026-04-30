@@ -36,6 +36,8 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/submissions/**").permitAll()
                 // Public: admin/user account auth
                 .requestMatchers("/api/v1/auth/**").permitAll()
+                // Public: shareable analytics
+                .requestMatchers("/api/v1/public/**").permitAll()
                 // Protected: role-based routes
                 .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                 .requestMatchers("/api/v1/users/**").hasAnyRole("USER", "ADMIN")

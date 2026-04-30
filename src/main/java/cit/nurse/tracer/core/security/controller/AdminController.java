@@ -1,8 +1,9 @@
 package cit.nurse.tracer.core.security.controller;
 
-import cit.nurse.tracer.submission.dto.SurveyResponseDetail;
 import cit.nurse.tracer.submission.dto.AdminSurveyResponseFilter;
 import cit.nurse.tracer.submission.dto.AdminNotificationEvent;
+import cit.nurse.tracer.submission.dto.SurveyAnalyticsResponse;
+import cit.nurse.tracer.submission.dto.SurveyResponseDetail;
 import cit.nurse.tracer.submission.dto.SurveyResponseSummary;
 import java.time.LocalDate;
 import cit.nurse.tracer.submission.service.AdminNotificationService;
@@ -108,6 +109,28 @@ public class AdminController {
             );
             return ResponseEntity.ok(surveyService.getSurveyResponseSummary(filter));
         }
+
+            @GetMapping("/survey-responses/analytics")
+            public ResponseEntity<SurveyAnalyticsResponse> getSurveyResponsesAnalytics(
+                @RequestParam(required = false) String query,
+                @RequestParam(required = false) String status,
+                @RequestParam(required = false) String employmentStatus,
+                @RequestParam(required = false) String licensureStatus,
+                @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate submittedFrom,
+                @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate submittedTo,
+                @RequestParam(required = false) String yearGraduated
+            ) {
+            AdminSurveyResponseFilter filter = new AdminSurveyResponseFilter(
+                query,
+                status,
+                employmentStatus,
+                licensureStatus,
+                submittedFrom,
+                submittedTo,
+                yearGraduated
+            );
+            return ResponseEntity.ok(surveyService.getSurveyAnalytics(filter));
+            }
 
     @GetMapping(value = "/export-csv", produces = "text/csv")
     public ResponseEntity<StreamingResponseBody> exportCsv() {

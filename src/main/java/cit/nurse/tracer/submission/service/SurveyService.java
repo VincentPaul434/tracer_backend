@@ -14,6 +14,7 @@ import cit.nurse.tracer.personalinfo.model.PersonalInfo;
 import cit.nurse.tracer.personalinfo.repository.PersonalInfoRepository;
 import cit.nurse.tracer.submission.dto.MasterSurveyRequest;
 import cit.nurse.tracer.submission.dto.AdminSurveyResponseFilter;
+import cit.nurse.tracer.submission.dto.SurveyAnalyticsResponse;
 import cit.nurse.tracer.submission.dto.SurveyResponseDetail;
 import cit.nurse.tracer.submission.dto.SurveyResponseSummary;
 import cit.nurse.tracer.submission.dto.SurveySubmissionResponse;
@@ -25,6 +26,7 @@ import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -48,6 +50,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class SurveyService {
 
     private static final String SURVEY_RESPONSES_CACHE = "surveyResponsesPage";
+    private static final String SURVEY_ANALYTICS_CACHE = "surveyAnalytics";
+    private static final String NO_RESPONSE = "No response";
     private static final int EXPORT_BATCH_SIZE = 500;
     private static final String[] CSV_HEADERS = {
             "submission_id",
@@ -134,7 +138,7 @@ public class SurveyService {
      * Saves the entire survey in a single transaction.
      * If any part fails, the whole submission rolls back.
      */
-    @CacheEvict(value = SURVEY_RESPONSES_CACHE, allEntries = true)
+    @CacheEvict(value = {SURVEY_RESPONSES_CACHE, SURVEY_ANALYTICS_CACHE}, allEntries = true)
     @Transactional
     public SurveySubmissionResponse submitSurvey(MasterSurveyRequest request) {
         if (!"yes".equals(request.consent())) {
@@ -266,6 +270,174 @@ public class SurveyService {
                 Math.max(total - finalized, 0),
                 employed,
                 pnlePassed
+        );
+    }
+
+    @Transactional(readOnly = true)
+    @Cacheable(
+            value = SURVEY_ANALYTICS_CACHE,
+            key = "(#filter.query() == null ? '' : #filter.query())"
+                    + " + ':' + (#filter.status() == null ? '' : #filter.status())"
+                    + " + ':' + (#filter.employmentStatus() == null ? '' : #filter.employmentStatus())"
+                    + " + ':' + (#filter.licensureStatus() == null ? '' : #filter.licensureStatus())"
+                    + " + ':' + (#filter.submittedFrom() == null ? '' : #filter.submittedFrom())"
+                    + " + ':' + (#filter.submittedTo() == null ? '' : #filter.submittedTo())"
+                    + " + ':' + (#filter.yearGraduated() == null ? '' : #filter.yearGraduated())"
+    )
+    public SurveyAnalyticsResponse getSurveyAnalytics(AdminSurveyResponseFilter filter) {
+        long total = 0;
+        long finalized = 0;
+        long draft = 0;
+
+        Map<String, Long> gender = new LinkedHashMap<>();
+        Map<String, Long> civilStatus = new LinkedHashMap<>();
+        Map<String, Long> degreeProgramCompleted = new LinkedHashMap<>();
+        Map<String, Long> yearGraduated = new LinkedHashMap<>();
+        Map<String, Long> academicHonors = new LinkedHashMap<>();
+        Map<String, Long> pursuedFurtherStudies = new LinkedHashMap<>();
+        Map<String, Long> furtherDegreeProgram = new LinkedHashMap<>();
+        Map<String, Long> furtherStudiesReason = new LinkedHashMap<>();
+        Map<String, Long> hasTakenPnle = new LinkedHashMap<>();
+        Map<String, Long> licensureStatus = new LinkedHashMap<>();
+        Map<String, Long> pnleYearPassed = new LinkedHashMap<>();
+        Map<String, Long> examTakeCount = new LinkedHashMap<>();
+        Map<String, Long> employmentStatus = new LinkedHashMap<>();
+        Map<String, Long> jobRelatedToDegree = new LinkedHashMap<>();
+        Map<String, Long> employmentSector = new LinkedHashMap<>();
+        Map<String, Long> positionDesignation = new LinkedHashMap<>();
+        Map<String, Long> firstJobDuration = new LinkedHashMap<>();
+        Map<String, Long> firstJobSources = new LinkedHashMap<>();
+        Map<String, Long> estimatedMonthlySalary = new LinkedHashMap<>();
+        Map<String, Long> unemploymentReasons = new LinkedHashMap<>();
+        Map<String, Long> relevanceSkills = new LinkedHashMap<>();
+        Map<String, Long> careerPreparationLevel = new LinkedHashMap<>();
+        Map<String, Long> nursingProgramAspect = new LinkedHashMap<>();
+        Map<String, Long> invitationChannels = new LinkedHashMap<>();
+        Map<String, Long> updateFrequency = new LinkedHashMap<>();
+        Map<String, Long> alumniGroupWillingness = new LinkedHashMap<>();
+        Map<String, Long> alumniPlatform = new LinkedHashMap<>();
+        Map<String, Long> textResponsesFilled = new LinkedHashMap<>();
+
+        int pageNumber = 0;
+        Page<SurveyResponseDetail> page;
+        do {
+            page = getSurveyResponses(
+                    PageRequest.of(pageNumber, EXPORT_BATCH_SIZE, Sort.by(Sort.Direction.DESC, "submittedAt")),
+                    filter
+            );
+
+            for (SurveyResponseDetail response : page.getContent()) {
+                total++;
+                if (response.status() != null) {
+                    if ("FINALIZED".equalsIgnoreCase(response.status())) {
+                        finalized++;
+                    } else if ("DRAFT".equalsIgnoreCase(response.status())) {
+                        draft++;
+                    }
+                }
+
+                SurveyResponseDetail.PersonalInfoSection personalInfo = response.personalInfo();
+                if (personalInfo != null) {
+                    incrementCount(gender, personalInfo.gender());
+                    incrementCount(civilStatus, personalInfo.civilStatus());
+                    incrementTextPresence(textResponsesFilled, "personalGenderOther", personalInfo.genderOther());
+                    incrementTextPresence(textResponsesFilled, "personalCivilStatusOther", personalInfo.civilStatusOther());
+                    incrementTextPresence(textResponsesFilled, "personalResidence", personalInfo.residence());
+                    incrementTextPresence(textResponsesFilled, "personalContactInformation", personalInfo.contactInformation());
+                    incrementTextPresence(textResponsesFilled, "personalIdImageUrl", personalInfo.idImageUrl());
+                }
+
+                SurveyResponseDetail.EducationalBackgroundSection educationalBackground = response.educationalBackground();
+                if (educationalBackground != null) {
+                    incrementCount(degreeProgramCompleted, educationalBackground.degreeProgramCompleted());
+                    incrementCount(yearGraduated, educationalBackground.yearGraduated());
+                    incrementMulti(academicHonors, educationalBackground.academicHonors());
+                    incrementBoolean(pursuedFurtherStudies, educationalBackground.pursuedFurtherStudies());
+                    incrementCount(furtherDegreeProgram, educationalBackground.furtherDegreeProgram());
+                    incrementCount(furtherStudiesReason, educationalBackground.furtherStudiesReason());
+                    incrementTextPresence(textResponsesFilled, "educationYearGraduatedOther", educationalBackground.yearGraduatedOther());
+                    incrementTextPresence(textResponsesFilled, "educationAcademicHonorsOtherText", educationalBackground.academicHonorsOtherText());
+                    incrementTextPresence(textResponsesFilled, "educationFurtherStudiesReasonOtherText", educationalBackground.furtherStudiesReasonOtherText());
+                }
+
+                SurveyResponseDetail.LicensureExaminationSection licensure = response.licensureExamination();
+                if (licensure != null) {
+                    incrementBoolean(hasTakenPnle, licensure.hasTakenPnle());
+                    incrementCount(licensureStatus, licensure.licensureStatus());
+                    incrementCount(pnleYearPassed, licensure.pnleYearPassed());
+                    incrementCount(examTakeCount, licensure.examTakeCount());
+                    incrementTextPresence(textResponsesFilled, "licensurePnleYearPassedOther", licensure.pnleYearPassedOther());
+                }
+
+                SurveyResponseDetail.EmploymentSection employment = response.employment();
+                if (employment != null) {
+                    incrementCount(employmentStatus, employment.employmentStatus());
+                    incrementCount(jobRelatedToDegree, employment.jobRelatedToDegree());
+                    incrementCount(employmentSector, employment.employmentSector());
+                    incrementCount(positionDesignation, employment.positionDesignation());
+                    incrementCount(firstJobDuration, employment.firstJobDuration());
+                    incrementMulti(firstJobSources, employment.firstJobSources());
+                    incrementCount(estimatedMonthlySalary, employment.estimatedMonthlySalary());
+                    incrementMulti(unemploymentReasons, employment.unemploymentReasons());
+                    incrementTextPresence(textResponsesFilled, "employmentSectorOther", employment.employmentSectorOther());
+                    incrementTextPresence(textResponsesFilled, "employmentPositionDesignationOther", employment.positionDesignationOther());
+                    incrementTextPresence(textResponsesFilled, "employmentFirstJobSourceOtherText", employment.firstJobSourceOtherText());
+                    incrementTextPresence(textResponsesFilled, "employmentUnemploymentReasonOtherText", employment.unemploymentReasonOtherText());
+                }
+
+                SurveyResponseDetail.ProgramEvaluationSection evaluation = response.programEvaluation();
+                if (evaluation != null) {
+                    incrementMulti(relevanceSkills, evaluation.relevanceSkills());
+                    incrementCount(careerPreparationLevel, evaluation.careerPreparationLevel());
+                    incrementCount(nursingProgramAspect, evaluation.nursingProgramAspect());
+                    incrementTextPresence(textResponsesFilled, "evaluationNursingProgramSuggestion", evaluation.nursingProgramSuggestion());
+                }
+
+                SurveyResponseDetail.CommunicationPreferenceSection communication = response.communicationPreference();
+                if (communication != null) {
+                    incrementMulti(invitationChannels, communication.invitationChannels());
+                    incrementCount(updateFrequency, communication.updateFrequency());
+                    incrementCount(alumniGroupWillingness, communication.alumniGroupWillingness());
+                    incrementCount(alumniPlatform, communication.alumniPlatform());
+                    incrementTextPresence(textResponsesFilled, "communicationInvitationChannelOtherText", communication.invitationChannelOtherText());
+                }
+            }
+
+            pageNumber++;
+        } while (page.hasNext());
+
+        return new SurveyAnalyticsResponse(
+                total,
+                finalized,
+                draft,
+                gender,
+                civilStatus,
+                degreeProgramCompleted,
+                yearGraduated,
+                academicHonors,
+                pursuedFurtherStudies,
+                furtherDegreeProgram,
+                furtherStudiesReason,
+                hasTakenPnle,
+                licensureStatus,
+                pnleYearPassed,
+                examTakeCount,
+                employmentStatus,
+                jobRelatedToDegree,
+                employmentSector,
+                positionDesignation,
+                firstJobDuration,
+                firstJobSources,
+                estimatedMonthlySalary,
+                unemploymentReasons,
+                relevanceSkills,
+                careerPreparationLevel,
+                nursingProgramAspect,
+                invitationChannels,
+                updateFrequency,
+                alumniGroupWillingness,
+                alumniPlatform,
+                textResponsesFilled
         );
     }
 
@@ -802,5 +974,47 @@ public class SurveyService {
 
     private boolean isOther(String value) {
         return value != null && "other".equalsIgnoreCase(value.trim());
+    }
+
+    private void incrementCount(Map<String, Long> counts, String value) {
+        counts.merge(normalizeValue(value), 1L, Long::sum);
+    }
+
+    private void incrementMulti(Map<String, Long> counts, String value) {
+        if (value == null || value.trim().isEmpty()) {
+            counts.merge(NO_RESPONSE, 1L, Long::sum);
+            return;
+        }
+
+        boolean added = false;
+        for (String raw : value.split(",")) {
+            String trimmed = raw == null ? "" : raw.trim();
+            if (!trimmed.isEmpty()) {
+                counts.merge(trimmed, 1L, Long::sum);
+                added = true;
+            }
+        }
+
+        if (!added) {
+            counts.merge(NO_RESPONSE, 1L, Long::sum);
+        }
+    }
+
+    private void incrementBoolean(Map<String, Long> counts, Boolean value) {
+        String key = value == null ? NO_RESPONSE : (value ? "Yes" : "No");
+        counts.merge(key, 1L, Long::sum);
+    }
+
+    private void incrementTextPresence(Map<String, Long> counts, String fieldKey, String value) {
+        if (value != null && !value.trim().isEmpty()) {
+            counts.merge(fieldKey, 1L, Long::sum);
+        }
+    }
+
+    private String normalizeValue(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return NO_RESPONSE;
+        }
+        return value.trim();
     }
 }
