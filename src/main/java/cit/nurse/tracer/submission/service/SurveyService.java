@@ -283,8 +283,11 @@ public class SurveyService {
             return null;
         }
         String upper = normalizedStatus.toUpperCase(Locale.ROOT);
+        if ("ALL".equals(upper)) {
+            return null;
+        }
         if (!"DRAFT".equals(upper) && !"FINALIZED".equals(upper)) {
-            throw new IllegalArgumentException("Invalid status filter. Allowed values are DRAFT or FINALIZED.");
+            return null;
         }
         return upper;
     }
