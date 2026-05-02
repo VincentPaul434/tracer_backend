@@ -1,26 +1,33 @@
 package cit.nurse.tracer.core.security.controller;
 
-import cit.nurse.tracer.submission.dto.SurveyResponseDetail;
+import cit.nurse.tracer.core.security.JwtUtils;
+import cit.nurse.tracer.publicapi.dto.PublicAnalyticsShareResponse;
 import cit.nurse.tracer.submission.dto.AdminSurveyResponseFilter;
 import cit.nurse.tracer.submission.dto.AdminNotificationEvent;
+import cit.nurse.tracer.submission.dto.SurveyAnalyticsResponse;
+import cit.nurse.tracer.submission.dto.SurveyResponseDetail;
 import cit.nurse.tracer.submission.dto.SurveyResponseSummary;
-import java.time.LocalDate;
 import cit.nurse.tracer.submission.service.AdminNotificationService;
 import cit.nurse.tracer.submission.service.SurveyService;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
-import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -46,10 +53,19 @@ public class AdminController {
 
     private final SurveyService surveyService;
     private final AdminNotificationService adminNotificationService;
+    private final JwtUtils jwtUtils;
+    private final String publicAnalyticsBaseUrl;
 
-    public AdminController(SurveyService surveyService, AdminNotificationService adminNotificationService) {
+    public AdminController(
+            SurveyService surveyService,
+            AdminNotificationService adminNotificationService,
+            JwtUtils jwtUtils,
+            @Value("${app.render.url:}") String publicAnalyticsBaseUrl
+    ) {
         this.surveyService = surveyService;
         this.adminNotificationService = adminNotificationService;
+        this.jwtUtils = jwtUtils;
+        this.publicAnalyticsBaseUrl = publicAnalyticsBaseUrl;
     }
 
     @GetMapping("/me")
@@ -108,6 +124,59 @@ public class AdminController {
             );
             return ResponseEntity.ok(surveyService.getSurveyResponseSummary(filter));
         }
+
+            @GetMapping("/survey-responses/analytics")
+            public ResponseEntity<SurveyAnalyticsResponse> getSurveyResponsesAnalytics(
+                @RequestParam(required = false) String query,
+                @RequestParam(required = false) String status,
+                @RequestParam(required = false) String employmentStatus,
+                @RequestParam(required = false) String licensureStatus,
+                @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate submittedFrom,
+                @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate submittedTo,
+                @RequestParam(required = false) String yearGraduated
+            ) {
+            AdminSurveyResponseFilter filter = new AdminSurveyResponseFilter(
+                query,
+                status,
+                employmentStatus,
+                licensureStatus,
+                submittedFrom,
+                submittedTo,
+                yearGraduated
+            );
+            return ResponseEntity.ok(surveyService.getSurveyAnalytics(filter));
+            }
+
+    @PostMapping("/public-analytics/share")
+    public ResponseEntity<PublicAnalyticsShareResponse> createPublicAnalyticsShare(
+            @RequestParam(required = false) String query,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String employmentStatus,
+            @RequestParam(required = false) String licensureStatus,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate submittedFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate submittedTo,
+            @RequestParam(required = false) String yearGraduated,
+            @RequestParam(required = false, defaultValue = "168") long ttlHours
+    ) {
+        long safeTtlHours = Math.min(Math.max(ttlHours, 1), 720);
+        Duration ttl = Duration.ofHours(safeTtlHours);
+
+        AdminSurveyResponseFilter filter = new AdminSurveyResponseFilter(
+            query,
+            status,
+            employmentStatus,
+            licensureStatus,
+            submittedFrom,
+            submittedTo,
+            yearGraduated
+        );
+
+        String token = jwtUtils.generatePublicAnalyticsToken(filter, ttl);
+        Instant expiresAt = Instant.now().plus(ttl);
+        String url = buildPublicAnalyticsUrl(token);
+
+        return ResponseEntity.ok(new PublicAnalyticsShareResponse(token, url, expiresAt));
+    }
 
     @GetMapping(value = "/export-csv", produces = "text/csv")
     public ResponseEntity<StreamingResponseBody> exportCsv() {
@@ -173,5 +242,18 @@ public class AdminController {
         }
 
         return Sort.by(safeOrders);
+    }
+
+    private String buildPublicAnalyticsUrl(String token) {
+        if (!StringUtils.hasText(publicAnalyticsBaseUrl)) {
+            return null;
+        }
+
+        String base = publicAnalyticsBaseUrl.trim();
+        if (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+
+        return base + "/api/v1/public/analytics?token=" + token;
     }
 }

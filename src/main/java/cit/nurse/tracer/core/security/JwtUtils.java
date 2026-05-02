@@ -1,5 +1,6 @@
 package cit.nurse.tracer.core.security;
 
+import cit.nurse.tracer.submission.dto.AdminSurveyResponseFilter;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
 import io.jsonwebtoken.Jwts;
@@ -17,6 +18,7 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.Date;
 import java.util.List;
 import java.util.UUID;
@@ -32,6 +34,7 @@ public class JwtUtils {
 
     private static final Logger log = LoggerFactory.getLogger(JwtUtils.class);
     private static final SignatureAlgorithm SIGNATURE_ALGORITHM = SignatureAlgorithm.RS256;
+    private static final String PUBLIC_ANALYTICS_PURPOSE = "public-analytics";
 
     private final RSAPrivateKey privateKey;
     private final RSAPublicKey publicKey;
@@ -82,6 +85,26 @@ public class JwtUtils {
             .compact();
     }
 
+    public String generatePublicAnalyticsToken(AdminSurveyResponseFilter filter, Duration ttl) {
+        Instant now = Instant.now();
+        Instant expiresAt = now.plus(ttl);
+
+        return Jwts.builder()
+            .setSubject(PUBLIC_ANALYTICS_PURPOSE)
+            .claim("purpose", PUBLIC_ANALYTICS_PURPOSE)
+            .claim("query", normalizeClaim(filter.query()))
+            .claim("status", normalizeClaim(filter.status()))
+            .claim("employmentStatus", normalizeClaim(filter.employmentStatus()))
+            .claim("licensureStatus", normalizeClaim(filter.licensureStatus()))
+            .claim("submittedFrom", normalizeClaim(toIsoDate(filter.submittedFrom())))
+            .claim("submittedTo", normalizeClaim(toIsoDate(filter.submittedTo())))
+            .claim("yearGraduated", normalizeClaim(filter.yearGraduated()))
+            .setIssuedAt(Date.from(now))
+            .setExpiration(Date.from(expiresAt))
+            .signWith(privateKey, SIGNATURE_ALGORITHM)
+            .compact();
+    }
+
     public boolean isTokenValid(String token) {
         try {
             parseClaims(token);
@@ -98,6 +121,23 @@ public class JwtUtils {
 
     public Claims extractClaims(String token) {
         return parseClaims(token).getBody();
+    }
+
+    public AdminSurveyResponseFilter extractPublicAnalyticsFilter(String token) {
+        Claims claims = extractClaims(token);
+        if (!PUBLIC_ANALYTICS_PURPOSE.equals(claims.get("purpose"))) {
+            throw new IllegalArgumentException("Invalid public analytics token");
+        }
+
+        return new AdminSurveyResponseFilter(
+            getStringClaim(claims, "query"),
+            getStringClaim(claims, "status"),
+            getStringClaim(claims, "employmentStatus"),
+            getStringClaim(claims, "licensureStatus"),
+            getLocalDateClaim(claims, "submittedFrom"),
+            getLocalDateClaim(claims, "submittedTo"),
+            getStringClaim(claims, "yearGraduated")
+        );
     }
 
     public List<String> extractRoles(String token) {
@@ -117,6 +157,25 @@ public class JwtUtils {
             .verifyWith(publicKey)
             .build()
             .parseSignedClaims(token);
+    }
+
+    private String getStringClaim(Claims claims, String name) {
+        Object value = claims.get(name);
+        String normalized = value == null ? null : value.toString();
+        return StringUtils.hasText(normalized) ? normalized : null;
+    }
+
+    private LocalDate getLocalDateClaim(Claims claims, String name) {
+        String value = getStringClaim(claims, name);
+        return StringUtils.hasText(value) ? LocalDate.parse(value) : null;
+    }
+
+    private String normalizeClaim(String value) {
+        return StringUtils.hasText(value) ? value : null;
+    }
+
+    private String toIsoDate(LocalDate value) {
+        return value == null ? null : value.toString();
     }
 
     private KeyPair loadOrGenerateKeyPair(String privateKeyPem, String publicKeyPem, Environment environment) {
