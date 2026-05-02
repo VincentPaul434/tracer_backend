@@ -1,5 +1,6 @@
 package cit.nurse.tracer.publicapi;
 
+import cit.nurse.tracer.core.security.JwtUtils;
 import cit.nurse.tracer.submission.dto.AdminSurveyResponseFilter;
 import cit.nurse.tracer.submission.dto.SurveyAnalyticsResponse;
 import cit.nurse.tracer.submission.service.SurveyService;
@@ -20,13 +21,16 @@ public class PublicAnalyticsController {
 
     private final SurveyService surveyService;
     private final String publicAnalyticsToken;
+    private final JwtUtils jwtUtils;
 
     public PublicAnalyticsController(
             SurveyService surveyService,
-            @Value("${app.security.public-analytics-token:}") String publicAnalyticsToken
+            @Value("${app.security.public-analytics-token:}") String publicAnalyticsToken,
+            JwtUtils jwtUtils
     ) {
         this.surveyService = surveyService;
         this.publicAnalyticsToken = publicAnalyticsToken;
+        this.jwtUtils = jwtUtils;
     }
 
     @GetMapping
@@ -40,11 +44,36 @@ public class PublicAnalyticsController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate submittedTo,
             @RequestParam(required = false) String yearGraduated
     ) {
-        if (!isTokenValid(token)) {
+        AdminSurveyResponseFilter filter = resolveFilter(
+            token,
+            query,
+            status,
+            employmentStatus,
+            licensureStatus,
+            submittedFrom,
+            submittedTo,
+            yearGraduated
+        );
+
+        if (filter == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-        AdminSurveyResponseFilter filter = new AdminSurveyResponseFilter(
+        return ResponseEntity.ok(surveyService.getSurveyAnalytics(filter));
+    }
+
+    private AdminSurveyResponseFilter resolveFilter(
+            String token,
+            String query,
+            String status,
+            String employmentStatus,
+            String licensureStatus,
+            LocalDate submittedFrom,
+            LocalDate submittedTo,
+            String yearGraduated
+    ) {
+        if (isStaticTokenValid(token)) {
+            return new AdminSurveyResponseFilter(
                 query,
                 status,
                 employmentStatus,
@@ -52,12 +81,17 @@ public class PublicAnalyticsController {
                 submittedFrom,
                 submittedTo,
                 yearGraduated
-        );
+            );
+        }
 
-        return ResponseEntity.ok(surveyService.getSurveyAnalytics(filter));
+        try {
+            return jwtUtils.extractPublicAnalyticsFilter(token);
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
-    private boolean isTokenValid(String token) {
+    private boolean isStaticTokenValid(String token) {
         return StringUtils.hasText(publicAnalyticsToken)
                 && StringUtils.hasText(token)
                 && publicAnalyticsToken.equals(token.trim());
