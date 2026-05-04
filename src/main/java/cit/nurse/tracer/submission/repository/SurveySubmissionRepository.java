@@ -14,6 +14,8 @@ public interface SurveySubmissionRepository extends JpaRepository<SurveySubmissi
 
     Optional<SurveySubmission> findByEmail(String email);
 
+    Optional<SurveySubmission> findByEditToken(String editToken);
+
         @Query(
             value = """
                 SELECT s
