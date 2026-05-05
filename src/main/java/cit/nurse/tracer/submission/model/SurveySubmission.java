@@ -11,6 +11,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.util.UUID;
 import java.time.LocalDateTime;
+import java.time.Instant;
 import jakarta.persistence.PrePersist;
 
 @Entity
@@ -38,6 +39,12 @@ public class SurveySubmission extends BaseEntity {
 
     @Column(name = "ip_hash", length = 64)
     private String ipHash;
+
+    @Column(name = "edit_token", length = 64, unique = true)
+    private String editToken;
+
+    @Column(name = "edit_token_expires_at")
+    private Instant editTokenExpiresAt;
 
     public UUID getId() {
         return id;
@@ -73,6 +80,22 @@ public class SurveySubmission extends BaseEntity {
 
     public void setIpHash(String ipHash) {
         this.ipHash = ipHash;
+    }
+
+    public String getEditToken() {
+        return editToken;
+    }
+
+    public void setEditToken(String editToken) {
+        this.editToken = editToken;
+    }
+
+    public Instant getEditTokenExpiresAt() {
+        return editTokenExpiresAt;
+    }
+
+    public void setEditTokenExpiresAt(Instant editTokenExpiresAt) {
+        this.editTokenExpiresAt = editTokenExpiresAt;
     }
 
     @Column(name = "submitted_at", nullable = false)

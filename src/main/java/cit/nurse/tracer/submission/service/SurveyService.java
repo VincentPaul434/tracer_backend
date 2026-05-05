@@ -25,17 +25,21 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.NoSuchElementException;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
@@ -113,6 +117,8 @@ public class SurveyService {
     private final ProgramEvaluationRepository evaluationRepo;
     private final CommunicationPreferenceRepository communicationRepo;
     private final AdminNotificationService adminNotificationService;
+    private final String editLinkBaseUrl;
+    private final long editLinkTtlHours;
 
     public SurveyService(
             SurveySubmissionRepository submissionRepo,
@@ -122,7 +128,9 @@ public class SurveyService {
             EmploymentDataRepository employmentRepo,
             ProgramEvaluationRepository evaluationRepo,
             CommunicationPreferenceRepository communicationRepo,
-            AdminNotificationService adminNotificationService
+            AdminNotificationService adminNotificationService,
+            @Value("${app.render.url:}") String editLinkBaseUrl,
+            @Value("${app.security.edit-link-ttl-hours:0}") long editLinkTtlHours
     ) {
         this.submissionRepo = submissionRepo;
         this.personalInfoRepo = personalInfoRepo;
@@ -132,6 +140,8 @@ public class SurveyService {
         this.evaluationRepo = evaluationRepo;
         this.communicationRepo = communicationRepo;
         this.adminNotificationService = adminNotificationService;
+        this.editLinkBaseUrl = editLinkBaseUrl;
+        this.editLinkTtlHours = editLinkTtlHours;
     }
 
     /**
@@ -165,7 +175,90 @@ public class SurveyService {
             submission.getSubmittedAt()
         );
 
-        return new SurveySubmissionResponse(submission.getId(), "Survey submitted successfully.");
+        return buildSubmissionResponse(submission, "Survey submitted successfully.");
+    }
+
+    /**
+     * Updates an existing survey submission and all of its sections.
+     */
+    @CacheEvict(value = {SURVEY_RESPONSES_CACHE, SURVEY_ANALYTICS_CACHE}, allEntries = true)
+    @Transactional
+    public SurveySubmissionResponse updateSurvey(UUID submissionId, MasterSurveyRequest request) {
+        if (!"yes".equals(request.consent())) {
+            throw new IllegalArgumentException("Privacy consent must be accepted to update the survey.");
+        }
+
+        SurveySubmission submission = submissionRepo.findById(submissionId)
+            .orElseThrow(() -> new NoSuchElementException("Survey submission not found."));
+
+        submission.setEmail(request.email().trim().toLowerCase());
+        submission.setHasAcceptedPrivacy(true);
+        submission.setStatus(SurveySubmission.Status.FINALIZED);
+        submissionRepo.save(submission);
+
+        updatePersonalInfo(submission, request.personalInfo());
+        updateEducationalBackground(submission, request.educationalBackground());
+        updateLicensureExamination(submission, request.licensureExamination());
+        updateEmployment(submission, request.employment());
+        updateProgramEvaluation(submission, request.programEvaluation());
+        updateCommunicationPreference(submission, request.communicationPreference());
+
+        return buildSubmissionResponse(submission, "Survey updated successfully.");
+    }
+
+    @CacheEvict(value = {SURVEY_RESPONSES_CACHE, SURVEY_ANALYTICS_CACHE}, allEntries = true)
+    @Transactional
+    public SurveySubmissionResponse updateSurveyByEditToken(String editToken, MasterSurveyRequest request) {
+        if (!"yes".equals(request.consent())) {
+            throw new IllegalArgumentException("Privacy consent must be accepted to update the survey.");
+        }
+        SurveySubmission submission = submissionRepo.findByEditToken(editToken)
+            .orElseThrow(() -> new NoSuchElementException("Edit link is invalid."));
+
+        if (isEditTokenExpired(submission)) {
+            throw new IllegalArgumentException("Edit link has expired.");
+        }
+
+        submission.setEmail(request.email().trim().toLowerCase());
+        submission.setHasAcceptedPrivacy(true);
+        submission.setStatus(SurveySubmission.Status.FINALIZED);
+        submissionRepo.save(submission);
+
+        updatePersonalInfo(submission, request.personalInfo());
+        updateEducationalBackground(submission, request.educationalBackground());
+        updateLicensureExamination(submission, request.licensureExamination());
+        updateEmployment(submission, request.employment());
+        updateProgramEvaluation(submission, request.programEvaluation());
+        updateCommunicationPreference(submission, request.communicationPreference());
+
+        return buildSubmissionResponse(submission, "Survey updated successfully.");
+    }
+
+    @Transactional(readOnly = true)
+    public SurveyResponseDetail getSurveyResponseByEditToken(String editToken) {
+        SurveySubmission submission = submissionRepo.findByEditToken(editToken)
+            .orElseThrow(() -> new NoSuchElementException("Edit link is invalid."));
+
+        if (isEditTokenExpired(submission)) {
+            throw new IllegalArgumentException("Edit link has expired.");
+        }
+
+        PersonalInfo personalInfo = personalInfoRepo.findBySubmission(submission).orElse(null);
+        EducationalBackground educationalBackground = educationRepo.findBySubmission(submission).orElse(null);
+        LicensureExamination licensureExamination = licensureRepo.findBySubmission(submission).orElse(null);
+        EmploymentData employmentData = employmentRepo.findBySubmission(submission).orElse(null);
+        ProgramEvaluation programEvaluation = evaluationRepo.findBySubmission(submission).orElse(null);
+        CommunicationPreference communicationPreference = communicationRepo.findBySubmission(submission).orElse(null);
+
+        return toSurveyResponseDetail(
+            submission,
+            personalInfo,
+            educationalBackground,
+            licensureExamination,
+            employmentData,
+            programEvaluation,
+            communicationPreference
+        );
     }
 
     @Transactional(readOnly = true)
@@ -948,6 +1041,176 @@ public class SurveyService {
         if ("Yes".equals(data.alumniGroupWillingness())) {
             entity.setAlumniPlatform(data.alumniPlatform());
         }
+        communicationRepo.save(entity);
+    }
+
+    private SurveySubmissionResponse buildSubmissionResponse(SurveySubmission submission, String message) {
+        String token = ensureEditToken(submission);
+        return new SurveySubmissionResponse(
+            submission.getId(),
+            message,
+            token,
+            buildEditLink(token),
+            submission.getEditTokenExpiresAt()
+        );
+    }
+
+    private String ensureEditToken(SurveySubmission submission) {
+        if (submission.getEditToken() != null && !submission.getEditToken().isBlank()) {
+            return submission.getEditToken();
+        }
+
+        String token = UUID.randomUUID().toString().replace("-", "");
+        submission.setEditToken(token);
+
+        if (editLinkTtlHours > 0) {
+            submission.setEditTokenExpiresAt(Instant.now().plus(Duration.ofHours(editLinkTtlHours)));
+        } else {
+            submission.setEditTokenExpiresAt(null);
+        }
+
+        submissionRepo.save(submission);
+        return token;
+    }
+
+    private String buildEditLink(String token) {
+        if (editLinkBaseUrl == null || editLinkBaseUrl.isBlank()) {
+            return null;
+        }
+        String normalized = editLinkBaseUrl.endsWith("/")
+            ? editLinkBaseUrl.substring(0, editLinkBaseUrl.length() - 1)
+            : editLinkBaseUrl;
+        return normalized + "/api/v1/submissions/edit/" + token;
+    }
+
+    private boolean isEditTokenExpired(SurveySubmission submission) {
+        Instant expiresAt = submission.getEditTokenExpiresAt();
+        return expiresAt != null && expiresAt.isBefore(Instant.now());
+    }
+
+    private void updatePersonalInfo(SurveySubmission submission, MasterSurveyRequest.PersonalInfoSection data) {
+        PersonalInfo entity = personalInfoRepo.findBySubmission(submission)
+            .orElseGet(() -> {
+                PersonalInfo created = new PersonalInfo();
+                created.setSubmission(submission);
+                return created;
+            });
+        entity.setFullName(data.fullName());
+        entity.setGender(data.gender());
+        entity.setGenderOther(data.genderOther());
+        entity.setCivilStatus(data.civilStatus());
+        entity.setCivilStatusOther(data.civilStatusOther());
+        entity.setBirthday(data.birthday());
+        entity.setResidence(data.residence());
+        entity.setContactInformation(data.contactInformation());
+        entity.setIdImageUrl(data.idImageUrl());
+        personalInfoRepo.save(entity);
+    }
+
+    private void updateEducationalBackground(SurveySubmission submission, MasterSurveyRequest.EducationalBackgroundSection data) {
+        EducationalBackground entity = educationRepo.findBySubmission(submission)
+            .orElseGet(() -> {
+                EducationalBackground created = new EducationalBackground();
+                created.setSubmission(submission);
+                return created;
+            });
+
+        entity.setDegreeProgramCompleted(data.degreeProgramCompleted());
+        entity.setYearGraduated(data.yearGraduated());
+        entity.setYearGraduatedOther(data.yearGraduatedOther());
+        entity.setAcademicHonors(extractSelectedKeys(data.academicHonors()));
+        entity.setAcademicHonorsOtherText(data.academicHonorsOtherText());
+
+        boolean pursuedFurtherStudies = isYes(data.pursuedFurtherStudies());
+        entity.setPursuedFurtherStudies(pursuedFurtherStudies);
+        entity.setFurtherDegreeProgram(pursuedFurtherStudies ? data.furtherDegreeProgram() : null);
+        entity.setFurtherStudiesReason(pursuedFurtherStudies ? data.furtherStudiesReason() : null);
+        entity.setFurtherStudiesReasonOtherText(
+            pursuedFurtherStudies && isOther(data.furtherStudiesReason())
+                ? data.furtherStudiesReasonOtherText()
+                : null
+        );
+
+        educationRepo.save(entity);
+    }
+
+    private void updateLicensureExamination(SurveySubmission submission, MasterSurveyRequest.LicensureExaminationSection data) {
+        LicensureExamination entity = licensureRepo.findBySubmission(submission)
+            .orElseGet(() -> {
+                LicensureExamination created = new LicensureExamination();
+                created.setSubmission(submission);
+                return created;
+            });
+
+        boolean taken = "Yes".equals(data.hasTakenPnle());
+        entity.setHasTakenPnle(taken);
+        entity.setLicensureStatus(taken ? data.licensureStatus() : null);
+        entity.setPnleYearPassed(taken ? data.pnleYearPassed() : null);
+        entity.setPnleYearPassedOther(taken ? data.pnleYearPassedOther() : null);
+        entity.setExamTakeCount(taken ? data.examTakeCount() : null);
+
+        licensureRepo.save(entity);
+    }
+
+    private void updateEmployment(SurveySubmission submission, MasterSurveyRequest.EmploymentSection data) {
+        EmploymentData entity = employmentRepo.findBySubmission(submission)
+            .orElseGet(() -> {
+                EmploymentData created = new EmploymentData();
+                created.setSubmission(submission);
+                return created;
+            });
+
+        entity.setEmploymentStatus(data.employmentStatus());
+
+        boolean isEmployed = "Employed".equals(data.employmentStatus())
+            || "Self employed".equals(data.employmentStatus());
+        boolean isUnemployed = "Unemployed".equals(data.employmentStatus())
+            || "Currently studying".equals(data.employmentStatus());
+
+        entity.setJobRelatedToDegree(isEmployed ? data.jobRelatedToDegree() : null);
+        entity.setEmploymentSector(isEmployed ? data.employmentSector() : null);
+        entity.setEmploymentSectorOther(isEmployed ? data.employmentSectorOther() : null);
+        entity.setPositionDesignation(isEmployed ? data.positionDesignation() : null);
+        entity.setPositionDesignationOther(isEmployed ? data.positionDesignationOther() : null);
+        entity.setFirstJobDuration(isEmployed ? data.firstJobDuration() : null);
+        entity.setFirstJobSources(isEmployed ? extractSelectedKeys(data.firstJobSources()) : null);
+        entity.setFirstJobSourceOtherText(isEmployed ? data.firstJobSourceOtherText() : null);
+        entity.setEstimatedMonthlySalary(isEmployed ? data.estimatedMonthlySalary() : null);
+
+        entity.setUnemploymentReasons(isUnemployed ? extractSelectedKeys(data.unemploymentReasons()) : null);
+        entity.setUnemploymentReasonOtherText(isUnemployed ? data.unemploymentReasonOtherText() : null);
+
+        employmentRepo.save(entity);
+    }
+
+    private void updateProgramEvaluation(SurveySubmission submission, MasterSurveyRequest.ProgramEvaluationSection data) {
+        ProgramEvaluation entity = evaluationRepo.findBySubmission(submission)
+            .orElseGet(() -> {
+                ProgramEvaluation created = new ProgramEvaluation();
+                created.setSubmission(submission);
+                return created;
+            });
+
+        entity.setRelevanceSkills(extractSelectedKeys(data.relevanceSkills()));
+        entity.setCareerPreparationLevel(data.careerPreparationLevel());
+        entity.setNursingProgramAspect(data.nursingProgramAspect());
+        entity.setNursingProgramSuggestion(data.nursingProgramSuggestion());
+        evaluationRepo.save(entity);
+    }
+
+    private void updateCommunicationPreference(SurveySubmission submission, MasterSurveyRequest.CommunicationPreferenceSection data) {
+        CommunicationPreference entity = communicationRepo.findBySubmission(submission)
+            .orElseGet(() -> {
+                CommunicationPreference created = new CommunicationPreference();
+                created.setSubmission(submission);
+                return created;
+            });
+
+        entity.setInvitationChannels(extractSelectedKeys(data.invitationChannels()));
+        entity.setInvitationChannelOtherText(data.invitationChannelOtherText());
+        entity.setUpdateFrequency(data.updateFrequency());
+        entity.setAlumniGroupWillingness(data.alumniGroupWillingness());
+        entity.setAlumniPlatform("Yes".equals(data.alumniGroupWillingness()) ? data.alumniPlatform() : null);
         communicationRepo.save(entity);
     }
 
